@@ -137,7 +137,7 @@ impl BattleState {
             .into_iter()
             .map(|actor| match actor.id {
                 ActorId::Character(character) => {
-                    let name = character.input_name();
+                    let name = character.display_name();
                     format!("{:2}[{}]", &name[..2.min(name.len())], actor.ctb)
                 }
                 ActorId::Monster(slot) => format!("M{}[{}]", slot.0, actor.ctb),
@@ -207,7 +207,7 @@ mod tests {
             state.next_actor(),
             Some(ActorId::Character(Character::Tidus))
         );
-        assert_eq!(state.ctb_order_string(), "ti[5] au[5] M1[5]");
+        assert_eq!(state.ctb_order_string(), "Ti[5] Au[5] M1[5]");
     }
 
     #[test]

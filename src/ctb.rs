@@ -1,7 +1,9 @@
 use serde::Serialize;
+use std::time::Instant;
 
 use crate::parser::{parse_raw_action_line, ParsedCommand};
 use crate::script::prepare_action_lines;
+use crate::simulator;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RenderResponse {
@@ -23,14 +25,17 @@ pub struct EncounterBlock {
 }
 
 pub fn render_ctb(seed: u32, input: &str) -> RenderResponse {
+    let started = Instant::now();
     let prepared = prepare_action_lines(input);
     let encounters = scan_encounters(&prepared.lines);
+    let simulated = simulator::simulate(seed, &prepared.lines);
+    let implemented = simulated.unsupported_count == 0;
     RenderResponse {
         seed,
-        output: render_scaffold_output(&encounters),
-        duration_seconds: 0.0,
-        implemented: false,
-        message: "Rust CTB renderer is scaffolded through input preparation and encounter scanning; port game-state/events next.".to_string(),
+        output: simulated.text,
+        duration_seconds: started.elapsed().as_secs_f64(),
+        implemented,
+        message: render_message(simulated.unsupported_count),
         prepared_line_count: prepared.lines.len(),
         encounters,
     }
@@ -72,19 +77,14 @@ pub fn scan_encounters(lines: &[String]) -> Vec<EncounterBlock> {
     encounters
 }
 
-fn render_scaffold_output(encounters: &[EncounterBlock]) -> String {
-    let mut lines = vec![
-        "# Rust CTB renderer scaffold".to_string(),
-        "# Encounter scanning is active; action simulation is not ported yet.".to_string(),
-    ];
-    for encounter in encounters {
-        lines.push(format!(
-            "# Encounter {}: {} lines {}-{}",
-            encounter.index, encounter.name, encounter.start_line, encounter.end_line
-        ));
+fn render_message(unsupported_count: usize) -> String {
+    if unsupported_count == 0 {
+        "Rust CTB renderer handled all parsed commands in this input.".to_string()
+    } else {
+        format!(
+            "Rust CTB renderer is partially ported; {unsupported_count} command(s) still need event-specific logic."
+        )
     }
-    lines.push(String::new());
-    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -124,6 +124,7 @@ mod tests {
         let response = render_ctb(3096296922, "encounter a\nx\n/repeat 2 1\nencounter b");
         assert_eq!(response.prepared_line_count, 6);
         assert_eq!(response.encounters.len(), 2);
-        assert!(response.output.contains("Encounter 1: a"));
+        assert!(response.output.contains("Encounter:   1 | a"));
+        assert!(!response.implemented);
     }
 }

@@ -48,6 +48,44 @@ impl Character {
             Self::Unknown => "unknown",
         }
     }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Tidus => "Tidus",
+            Self::Yuna => "Yuna",
+            Self::Auron => "Auron",
+            Self::Kimahri => "Kimahri",
+            Self::Wakka => "Wakka",
+            Self::Lulu => "Lulu",
+            Self::Rikku => "Rikku",
+            Self::Seymour => "Seymour",
+            Self::Valefor => "Valefor",
+            Self::Ifrit => "Ifrit",
+            Self::Ixion => "Ixion",
+            Self::Shiva => "Shiva",
+            Self::Bahamut => "Bahamut",
+            Self::Anima => "Anima",
+            Self::Yojimbo => "Yojimbo",
+            Self::Cindy => "Cindy",
+            Self::Sandy => "Sandy",
+            Self::Mindy => "Mindy",
+            Self::Unknown => "Unknown",
+        }
+    }
+
+    pub fn from_party_initial(initial: char) -> Option<Self> {
+        match initial.to_ascii_lowercase() {
+            't' => Some(Self::Tidus),
+            'y' => Some(Self::Yuna),
+            'a' => Some(Self::Auron),
+            'k' => Some(Self::Kimahri),
+            'w' => Some(Self::Wakka),
+            'l' => Some(Self::Lulu),
+            'r' => Some(Self::Rikku),
+            's' => Some(Self::Seymour),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Character {

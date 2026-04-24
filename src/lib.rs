@@ -6,6 +6,7 @@ pub mod model;
 pub mod parser;
 pub mod rng;
 pub mod script;
+pub mod simulator;
 
 pub use rng::FfxRngTracker;
 
