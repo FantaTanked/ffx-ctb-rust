@@ -1,6 +1,9 @@
 pub mod api;
 pub mod ctb;
+pub mod model;
+pub mod parser;
 pub mod rng;
+pub mod script;
 
 pub use rng::FfxRngTracker;
 

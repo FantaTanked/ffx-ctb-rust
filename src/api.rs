@@ -25,7 +25,11 @@ pub fn rng_preview_json(seed: u32, index: usize, count: usize) -> Result<String,
     }
     let mut tracker = FfxRngTracker::new(seed);
     let values = (0..count).map(|_| tracker.advance_rng(index)).collect();
-    Ok(serde_json::to_string(&RngPreviewResponse { seed, index, values })?)
+    Ok(serde_json::to_string(&RngPreviewResponse {
+        seed,
+        index,
+        values,
+    })?)
 }
 
 pub fn render_ctb_json(seed: u32, input: &str) -> Result<String, ApiError> {

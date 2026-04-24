@@ -39,9 +39,22 @@ Run native tests:
 cargo test
 ```
 
+If a newly opened PowerShell still cannot find `cargo`, use the direct rustup path:
+
+```powershell
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test
+```
+
 Build the WASM package:
 
 ```powershell
+wasm-pack build --target web
+```
+
+If `wasm-pack` cannot find the Rust binaries from PowerShell, temporarily add Cargo to `PATH`:
+
+```powershell
+$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 wasm-pack build --target web
 ```
 
