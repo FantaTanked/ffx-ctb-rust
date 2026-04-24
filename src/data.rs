@@ -6,13 +6,13 @@ use serde::Deserialize;
 use crate::model::EncounterCondition;
 
 const FORMATIONS_JSON: &str =
-    include_str!("../../FFX-RNG-tracker-main/ffx_rng_tracker/data/data_files/formations.json");
+    include_str!("../data/formations.json");
 const MONSTER_DATA_HD_CSV: &str =
-    include_str!("../../FFX-RNG-tracker-main/ffx_rng_tracker/data/data_files/ffx_mon_data_hd.csv");
+    include_str!("../data/ffx_mon_data_hd.csv");
 const COMMAND_CSV: &str =
-    include_str!("../../FFX-RNG-tracker-main/ffx_rng_tracker/data/data_files/ffx_command.csv");
+    include_str!("../data/ffx_command.csv");
 const TEXT_CHARACTERS_CSV: &str =
-    include_str!("../../FFX-RNG-tracker-main/ffx_rng_tracker/data/data_files/text_characters.csv");
+    include_str!("../data/text_characters.csv");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EncounterFormation {
