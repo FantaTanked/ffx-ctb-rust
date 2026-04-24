@@ -11,6 +11,8 @@ pub struct RenderResponse {
     pub output: String,
     pub duration_seconds: f64,
     pub implemented: bool,
+    pub parity_complete: bool,
+    pub unsupported_count: usize,
     pub message: String,
     pub prepared_line_count: usize,
     pub encounters: Vec<EncounterBlock>,
@@ -35,6 +37,8 @@ pub fn render_ctb(seed: u32, input: &str) -> RenderResponse {
         output: simulated.text,
         duration_seconds: started.elapsed().as_secs_f64(),
         implemented,
+        parity_complete: false,
+        unsupported_count: simulated.unsupported_count,
         message: render_message(simulated.unsupported_count),
         prepared_line_count: prepared.lines.len(),
         encounters,
@@ -79,7 +83,7 @@ pub fn scan_encounters(lines: &[String]) -> Vec<EncounterBlock> {
 
 fn render_message(unsupported_count: usize) -> String {
     if unsupported_count == 0 {
-        "Rust CTB renderer handled all parsed commands in this input.".to_string()
+        "Rust CTB renderer handled all parsed commands in this input with the current shallow simulation layer; full Python parity is still in progress.".to_string()
     } else {
         format!(
             "Rust CTB renderer is partially ported; {unsupported_count} command(s) still need event-specific logic."
@@ -121,10 +125,15 @@ mod tests {
 
     #[test]
     fn render_response_uses_prepared_lines() {
-        let response = render_ctb(3096296922, "encounter a\nx\n/repeat 2 1\nencounter b");
+        let response = render_ctb(
+            3096296922,
+            "encounter a\nstatus atb\n/repeat 2 1\nencounter b",
+        );
         assert_eq!(response.prepared_line_count, 6);
         assert_eq!(response.encounters.len(), 2);
         assert!(response.output.contains("Encounter:   1 | a"));
-        assert!(!response.implemented);
+        assert!(response.implemented);
+        assert!(!response.parity_complete);
+        assert_eq!(response.unsupported_count, 0);
     }
 }

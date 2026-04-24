@@ -23,6 +23,7 @@ pub enum ActorId {
 #[derive(Debug, Clone)]
 pub struct BattleActor {
     pub id: ActorId,
+    pub monster_key: Option<String>,
     pub index: usize,
     pub agility: u8,
     pub current_hp: i32,
@@ -33,16 +34,38 @@ pub struct BattleActor {
 
 impl BattleActor {
     pub fn character(character: Character, index: usize, agility: u8, max_hp: i32) -> Self {
-        Self::new(ActorId::Character(character), index, agility, max_hp)
+        Self::new(ActorId::Character(character), None, index, agility, max_hp)
     }
 
     pub fn monster(slot: MonsterSlot, agility: u8, max_hp: i32) -> Self {
-        Self::new(ActorId::Monster(slot), slot.0 - 1, agility, max_hp)
+        Self::monster_with_key(slot, None, agility, max_hp)
     }
 
-    fn new(id: ActorId, index: usize, agility: u8, max_hp: i32) -> Self {
+    pub fn monster_with_key(
+        slot: MonsterSlot,
+        monster_key: Option<String>,
+        agility: u8,
+        max_hp: i32,
+    ) -> Self {
+        Self::new(
+            ActorId::Monster(slot),
+            monster_key,
+            slot.0 - 1,
+            agility,
+            max_hp,
+        )
+    }
+
+    fn new(
+        id: ActorId,
+        monster_key: Option<String>,
+        index: usize,
+        agility: u8,
+        max_hp: i32,
+    ) -> Self {
         Self {
             id,
+            monster_key,
             index,
             agility,
             current_hp: max_hp,

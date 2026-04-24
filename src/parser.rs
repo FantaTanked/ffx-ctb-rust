@@ -24,6 +24,17 @@ pub enum ParsedCommand {
         kind: String,
         args: Vec<String>,
     },
+    Summon {
+        aeon: String,
+    },
+    Spawn {
+        monster: String,
+        slot: MonsterSlot,
+        forced_ctb: Option<i32>,
+    },
+    Element {
+        args: Vec<String>,
+    },
     Status {
         args: Vec<String>,
     },
@@ -33,7 +44,10 @@ pub enum ParsedCommand {
     Party {
         initials: String,
     },
-    Heal,
+    Heal {
+        args: Vec<String>,
+    },
+    EndEncounter,
     AdvanceRng {
         index: u32,
         amount: u32,
@@ -79,6 +93,19 @@ pub fn parse_edited_action_line(edited_line: &str) -> ParsedCommand {
                 .map(|word| (*word).to_string())
                 .collect(),
         },
+        "summon" => ParsedCommand::Summon {
+            aeon: words.get(1).copied().unwrap_or_default().to_string(),
+        },
+        "spawn" => parse_spawn(&words).unwrap_or_else(|| ParsedCommand::Unknown {
+            edited_line: edited_line.to_string(),
+        }),
+        "element" => ParsedCommand::Element {
+            args: words
+                .iter()
+                .skip(1)
+                .map(|word| (*word).to_string())
+                .collect(),
+        },
         "status" => ParsedCommand::Status {
             args: words
                 .iter()
@@ -96,7 +123,14 @@ pub fn parse_edited_action_line(edited_line: &str) -> ParsedCommand {
         "party" => ParsedCommand::Party {
             initials: words.get(1).copied().unwrap_or_default().to_string(),
         },
-        "heal" => ParsedCommand::Heal,
+        "heal" => ParsedCommand::Heal {
+            args: words
+                .iter()
+                .skip(1)
+                .map(|word| (*word).to_string())
+                .collect(),
+        },
+        "endencounter" => ParsedCommand::EndEncounter,
         "roll" | "advance" | "waste" => {
             parse_advance_rng(&words).unwrap_or_else(|| ParsedCommand::Unknown {
                 edited_line: edited_line.to_string(),
@@ -149,10 +183,35 @@ fn parse_monster_action(words: &[&str]) -> Option<ParsedCommand> {
     })
 }
 
+fn parse_spawn(words: &[&str]) -> Option<ParsedCommand> {
+    let slot_token = words.get(2)?;
+    let slot = slot_token
+        .parse::<MonsterSlot>()
+        .or_else(|_| slot_token.parse::<usize>().map(MonsterSlot).map_err(|_| ()))
+        .ok()?;
+    if !(1..=8).contains(&slot.0) {
+        return None;
+    }
+    Some(ParsedCommand::Spawn {
+        monster: words.get(1)?.to_string(),
+        slot,
+        forced_ctb: words.get(3).and_then(|value| value.parse::<i32>().ok()),
+    })
+}
+
 fn parse_advance_rng(words: &[&str]) -> Option<ParsedCommand> {
+    let index_token = words.get(1)?;
+    let index = index_token
+        .strip_prefix("rng")
+        .unwrap_or(index_token)
+        .parse()
+        .ok()?;
     Some(ParsedCommand::AdvanceRng {
-        index: words.get(1)?.parse().ok()?,
-        amount: words.get(2)?.parse().ok()?,
+        index,
+        amount: words
+            .get(2)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1),
     })
 }
 
@@ -191,6 +250,21 @@ mod tests {
             ParsedCommand::AdvanceRng {
                 index: 20,
                 amount: 3
+            }
+        );
+        assert_eq!(
+            parse_raw_action_line("roll rng4"),
+            ParsedCommand::AdvanceRng {
+                index: 4,
+                amount: 1
+            }
+        );
+        assert_eq!(
+            parse_raw_action_line("spawn sinscale_3 4 -2"),
+            ParsedCommand::Spawn {
+                monster: "sinscale_3".to_string(),
+                slot: MonsterSlot(4),
+                forced_ctb: Some(-2),
             }
         );
     }

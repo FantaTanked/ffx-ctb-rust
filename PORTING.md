@@ -50,3 +50,14 @@ The first benchmark target should be the Tanker custom action path:
 - Python desktop/local target: about `0.9s`
 - Pyodide baseline: about `2.0s`
 - Rust/WASM target: below local Python once equivalent checkpointing is implemented
+
+## Rust Port Checkpoints
+
+- RNG tracker parity is implemented and covered by known-output tests.
+- Parser normalization covers action, monster action, equip, party, heal, status/stat, encounter, and friendly RNG roll aliases.
+- The simulator now handles party changes, summons, manual RNG advances, `status atb`, heal, equipment/element no-ops, stat/status edits, monster spawns, early encounter monster ICVs for `sinscales`, `ammes`, and `tanker`, placeholder unknown encounters, and basic CTB advancement for character/monster action lines.
+- Encounter formation, forced party/condition, random-zone formation selection, and monster HP/agility now load from upstream data files instead of hardcoded Rust tables.
+- The default `search_outputs/3096296922/ctb_actions_input.txt` is covered by a Rust smoke test and currently renders with zero unsupported command gaps.
+- `wasm-pack build --target web` has been verified and emits the browser package under `pkg/`.
+- The JSON render response separates command coverage from parity: `implemented` means every parsed command was handled by the Rust layer, while `parity_complete` remains `false` until full Python-equivalent event logic is ported.
+- Action effects are still intentionally shallow: common ranks plus haste/slow are modeled, but damage, full target effects, full formation data, equipment mechanics, elemental affinity mechanics, and event-specific AI remain to be ported for parity.

@@ -14,6 +14,10 @@ Implemented:
 - Known-output parity tests copied from the Python implementation
 - WASM-facing API shell
 - Porting map for the remaining parser, game-state, event, and renderer layers
+- Basic CTB simulation for party changes, RNG advances, early encounter monster ICVs, character/monster turn advancement, haste/slow, and heal
+- Shallow route-continuity support for summon, spawn, stat/status edits, equipment, element edits, placeholder unknown encounters, and the default `ctb_actions_input.txt`
+- Static formation and monster HP/agility loading from the upstream `formations.json`, `ffx_mon_data_hd.csv`, and `text_characters.csv` files
+- Verified `wasm-pack build --target web` output in `pkg/`
 
 Not implemented yet:
 
