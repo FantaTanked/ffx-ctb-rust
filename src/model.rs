@@ -103,3 +103,16 @@ impl FromStr for MonsterSlot {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Status {
+    Death,
+    Eject,
+    Petrify,
+    Sleep,
+    Haste,
+    Slow,
+    Regen,
+    Poison,
+    Doom,
+}

@@ -1,4 +1,5 @@
 pub mod api;
+pub mod battle;
 pub mod ctb;
 pub mod model;
 pub mod parser;
