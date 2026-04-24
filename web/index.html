@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FFX CTB Rust</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>FFX CTB Rust</h1>
+        <p id="status">Load the WASM package with <code>wasm-pack build --target web</code>.</p>
+      </header>
+      <section class="workspace">
+        <label>
+          Seed
+          <input id="seed" type="number" value="3096296922">
+        </label>
+        <label>
+          Input
+          <textarea id="input" spellcheck="false"></textarea>
+        </label>
+        <button id="render" type="button">Render</button>
+        <pre id="output"></pre>
+      </section>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
