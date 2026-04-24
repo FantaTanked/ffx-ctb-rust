@@ -1,6 +1,7 @@
 pub mod api;
 pub mod battle;
 pub mod ctb;
+pub mod encounter;
 pub mod model;
 pub mod parser;
 pub mod rng;

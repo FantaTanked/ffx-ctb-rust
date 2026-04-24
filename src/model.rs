@@ -116,3 +116,10 @@ pub enum Status {
     Poison,
     Doom,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EncounterCondition {
+    Preemptive,
+    Normal,
+    Ambush,
+}
