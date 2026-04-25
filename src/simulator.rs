@@ -316,6 +316,7 @@ impl SimulationState {
         args: &[String],
     ) -> String {
         let actor_id = ActorId::Character(actor);
+        self.process_start_of_turn(actor_id);
         let action_data = self.action_data_for_actor(actor_id, action);
         let rank = action_data
             .as_ref()
@@ -326,6 +327,7 @@ impl SimulationState {
             return format!("Error: Unknown actor for action: {actor}");
         };
         self.apply_action_effects(actor_id, action_data.as_ref(), args);
+        self.process_end_of_turn(actor_id);
         format!(
             "{} -> {} [{spent_ctb}] | {}",
             actor.display_name(),
@@ -337,6 +339,7 @@ impl SimulationState {
     fn apply_monster_action(&mut self, slot: MonsterSlot, action: &str, args: &[String]) -> String {
         self.ensure_monster_slot(slot);
         let actor_id = ActorId::Monster(slot);
+        self.process_start_of_turn(actor_id);
         let action_data = self.action_data_for_actor(actor_id, action);
         let rank = action_data
             .as_ref()
@@ -347,6 +350,7 @@ impl SimulationState {
             return format!("Error: Unknown monster slot for action: m{}", slot.0);
         };
         self.apply_action_effects(actor_id, action_data.as_ref(), args);
+        self.process_end_of_turn(actor_id);
         format!(
             "M{} -> {} [{spent_ctb}] | {}",
             slot.0,
@@ -925,6 +929,30 @@ impl SimulationState {
         }
     }
 
+    fn process_start_of_turn(&mut self, actor_id: ActorId) {
+        let Some(actor) = self.actor_mut(actor_id) else {
+            return;
+        };
+        for status in temporary_statuses() {
+            actor.statuses.remove(&status);
+        }
+        apply_auto_statuses(actor);
+    }
+
+    fn process_end_of_turn(&mut self, actor_id: ActorId) {
+        let poison_damage = self.actor(actor_id).and_then(|actor| {
+            actor
+                .statuses
+                .contains(&Status::Poison)
+                .then_some(actor.max_hp / 4)
+        });
+        if let Some(damage) = poison_damage {
+            self.apply_hp_damage(actor_id, damage);
+        }
+        let elapsed_ctb = self.normalize_after_turn();
+        self.apply_regen(elapsed_ctb);
+    }
+
     fn apply_actor_turn(&mut self, actor_id: ActorId, rank: i32) -> Option<i32> {
         let spent_ctb = {
             let actor = self.actor_mut(actor_id)?;
@@ -932,11 +960,10 @@ impl SimulationState {
             actor.ctb = (actor.ctb + spent_ctb).max(0);
             spent_ctb
         };
-        self.normalize_after_turn();
         Some(spent_ctb)
     }
 
-    fn normalize_after_turn(&mut self) {
+    fn normalize_after_turn(&mut self) -> i32 {
         let min_ctb = self
             .current_party_actors()
             .iter()
@@ -946,7 +973,7 @@ impl SimulationState {
             .min()
             .unwrap_or(0);
         if min_ctb == 0 {
-            return;
+            return 0;
         }
         let party = self.party.clone();
         for actor in &mut self.character_actors {
@@ -958,6 +985,22 @@ impl SimulationState {
             if !actor.statuses.contains(&Status::Petrify) {
                 actor.ctb = (actor.ctb - min_ctb).max(0);
             }
+        }
+        min_ctb
+    }
+
+    fn apply_regen(&mut self, elapsed_ctb: i32) {
+        for actor in self
+            .character_actors
+            .iter_mut()
+            .chain(self.monsters.iter_mut())
+        {
+            if !actor.statuses.contains(&Status::Regen) || actor.current_hp <= 0 {
+                continue;
+            }
+            let healing = elapsed_ctb * actor.max_hp / 256 + 100;
+            actor.current_hp = (actor.current_hp + healing).clamp(0, actor.max_hp.max(1));
+            actor.statuses.remove(&Status::Death);
         }
     }
 
@@ -1326,6 +1369,16 @@ fn action_misses_target(action: &ActionData, target: Option<&BattleActor>) -> bo
         && target.is_some_and(|target| {
             !target.statuses.contains(&Status::Death) && !target.statuses.contains(&Status::Zombie)
         })
+}
+
+fn temporary_statuses() -> [Status; 5] {
+    [
+        Status::Defend,
+        Status::Shield,
+        Status::Boost,
+        Status::Guard,
+        Status::Sentinel,
+    ]
 }
 
 fn nul_status_for_element(element: Element) -> Option<Status> {
@@ -2132,6 +2185,59 @@ mod tests {
         );
 
         assert!(state.monsters[0].statuses.contains(&Status::Eject));
+    }
+
+    #[test]
+    fn turn_start_removes_temporary_statuses() {
+        let mut state = SimulationState::new(1);
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .statuses
+            .insert(Status::Defend);
+
+        state.apply_character_action(Character::Tidus, "attack", &[String::from("m1")]);
+
+        let tidus = state.character_actor(Character::Tidus).unwrap();
+        assert!(!tidus.statuses.contains(&Status::Defend));
+    }
+
+    #[test]
+    fn turn_end_applies_poison_and_regen_upkeep() {
+        let mut state = SimulationState::new(1);
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        let tidus = state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap();
+        tidus.statuses.insert(Status::Poison);
+        let poison_damage = tidus.max_hp / 4;
+        let tidus_hp = tidus.current_hp;
+        let yuna = state
+            .actor_mut(ActorId::Character(Character::Yuna))
+            .unwrap();
+        yuna.statuses.insert(Status::Regen);
+        yuna.current_hp -= 200;
+        let yuna_hp = yuna.current_hp;
+
+        state.apply_character_action(Character::Tidus, "attack", &[String::from("m1")]);
+
+        let tidus = state.character_actor(Character::Tidus).unwrap();
+        let yuna = state.character_actor(Character::Yuna).unwrap();
+        assert_eq!(tidus.current_hp, tidus_hp - poison_damage);
+        assert!(yuna.current_hp > yuna_hp);
     }
 
     #[test]
