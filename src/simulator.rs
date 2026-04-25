@@ -328,10 +328,17 @@ impl SimulationState {
             .as_ref()
             .map(|action| action.rank)
             .unwrap_or_else(|| fallback_action_rank(action));
+        let escape_succeeded = action
+            .eq_ignore_ascii_case("escape")
+            .then(|| self.escape_succeeds(actor_id))
+            .unwrap_or(false);
         let Some(spent_ctb) = self.apply_actor_turn(actor_id, rank) else {
             self.unsupported_count += 1;
             return format!("Error: Unknown actor for action: {actor}");
         };
+        if escape_succeeded {
+            self.apply_status_to_actor(actor_id, Status::Eject);
+        }
         self.apply_action_effects(actor_id, action_data.as_ref(), args);
         self.process_end_of_turn(actor_id);
         format!(
@@ -377,6 +384,15 @@ impl SimulationState {
             }
         }
         data::action_data(action)
+    }
+
+    fn escape_succeeds(&mut self, actor_id: ActorId) -> bool {
+        let Some(actor) = self.actor(actor_id) else {
+            return false;
+        };
+        let rng_index = 20 + actor.index;
+        let escape_roll = self.rng.advance_rng(rng_index) & 255;
+        escape_roll < 191
     }
 
     fn apply_action_effects(
@@ -1414,7 +1430,7 @@ fn apply_template_auto_statuses(actor: &mut BattleActor, template: &MonsterTempl
 
 fn fallback_action_rank(action: &str) -> i32 {
     data::action_rank(action).unwrap_or_else(|| match action.to_ascii_lowercase().as_str() {
-        "quick_hit_ps2" => 1,
+        "escape" | "quick_hit_ps2" => 1,
         "defend" | "quick_hit_hd" | "use" => 2,
         "haste" => 4,
         "delay_attack" => 6,
@@ -2051,6 +2067,17 @@ mod tests {
         assert_eq!(state.character_actor(Character::Tidus).unwrap().ctb, 6);
         assert_eq!(state.character_actor(Character::Auron).unwrap().ctb, 9);
         assert_eq!(state.ctb_since_last_action, 3);
+    }
+
+    #[test]
+    fn escape_uses_one_base_ctb_and_character_rng() {
+        let mut state = SimulationState::new(1);
+        let before_rng20 = state.rng.current_positions()[20];
+
+        let rendered = state.apply_character_action(Character::Tidus, "escape", &[]);
+
+        assert!(rendered.contains("Tidus -> Escape [14]"), "{rendered}");
+        assert_eq!(state.rng.current_positions()[20], before_rng20 + 1);
     }
 
     #[test]
