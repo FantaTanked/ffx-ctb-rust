@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::model::{AutoAbility, Buff, Character, MonsterSlot, Status};
+use crate::model::{AutoAbility, Buff, Character, Element, ElementalAffinity, MonsterSlot, Status};
 
 const ICV_BASE: [u16; 256] = [
     28, 28, 26, 24, 20, 16, 16, 15, 15, 15, 14, 14, 13, 13, 13, 12, 12, 11, 11, 10, 10, 10, 10, 9,
@@ -55,6 +55,8 @@ pub struct BattleActor {
     pub buffs: HashMap<Buff, i32>,
     pub weapon_abilities: HashSet<AutoAbility>,
     pub armor_abilities: HashSet<AutoAbility>,
+    pub weapon_elements: HashSet<Element>,
+    pub elemental_affinities: HashMap<Element, ElementalAffinity>,
     pub statuses: HashSet<Status>,
 }
 
@@ -112,6 +114,8 @@ impl BattleActor {
             buffs: HashMap::new(),
             weapon_abilities: HashSet::new(),
             armor_abilities: HashSet::new(),
+            weapon_elements: HashSet::new(),
+            elemental_affinities: neutral_elemental_affinities(),
             statuses: HashSet::new(),
         }
     }
@@ -158,9 +162,32 @@ impl BattleActor {
         self.armor_abilities = abilities;
     }
 
+    pub fn set_weapon_elements(&mut self, elements: HashSet<Element>) {
+        self.weapon_elements = elements;
+    }
+
+    pub fn set_elemental_affinities(&mut self, affinities: HashMap<Element, ElementalAffinity>) {
+        self.elemental_affinities = affinities;
+    }
+
+    pub fn set_elemental_affinity(&mut self, element: Element, affinity: ElementalAffinity) {
+        self.elemental_affinities.insert(element, affinity);
+    }
+
     pub fn has_auto_ability(&self, ability: AutoAbility) -> bool {
         self.weapon_abilities.contains(&ability) || self.armor_abilities.contains(&ability)
     }
+}
+
+pub fn neutral_elemental_affinities() -> HashMap<Element, ElementalAffinity> {
+    [
+        (Element::Fire, ElementalAffinity::Neutral),
+        (Element::Ice, ElementalAffinity::Neutral),
+        (Element::Thunder, ElementalAffinity::Neutral),
+        (Element::Water, ElementalAffinity::Neutral),
+    ]
+    .into_iter()
+    .collect()
 }
 
 #[derive(Debug, Clone)]

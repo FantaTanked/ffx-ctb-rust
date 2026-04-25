@@ -1,7 +1,10 @@
 use crate::battle::{ActorId, BattleActor, BattleState, CombatStats};
 use crate::data::{self, ActionData, ActionTarget, DamageFormula};
 use crate::encounter::{character_initial_ctb, encounter_condition_from_roll, monster_initial_ctb};
-use crate::model::{AutoAbility, Buff, Character, EncounterCondition, MonsterSlot, Status};
+use crate::model::{
+    AutoAbility, Buff, Character, Element, ElementalAffinity, EncounterCondition, MonsterSlot,
+    Status,
+};
 use crate::parser::{parse_raw_action_line, ParsedCommand};
 use crate::rng::FfxRngTracker;
 use std::collections::HashSet;
@@ -211,6 +214,7 @@ impl SimulationState {
                 template.max_hp,
             );
             actor.set_combat_stats(template.combat_stats);
+            actor.set_elemental_affinities(template.elemental_affinities.clone());
             self.monsters.push(actor);
         }
         self.advance_duplicate_monster_rngs(&templates);
@@ -426,6 +430,7 @@ impl SimulationState {
             }
         }
         apply_auto_statuses(actor);
+        apply_equipment_elements(actor);
         format!(
             "Equipment: {kind} {} [{}]",
             character.display_name(),
@@ -458,6 +463,7 @@ impl SimulationState {
             template.max_hp,
         );
         actor.set_combat_stats(template.combat_stats);
+        actor.set_elemental_affinities(template.elemental_affinities.clone());
         if let Some(ctb) = forced_ctb {
             actor.ctb = ctb;
         }
@@ -475,6 +481,27 @@ impl SimulationState {
     }
 
     fn change_element(&mut self, args: &[String]) -> String {
+        let Some(actor_id) = args.first().and_then(|arg| self.resolve_actor_id(arg)) else {
+            self.unsupported_count += 1;
+            return format!("Error: invalid element actor: {}", args.join(" "));
+        };
+        let Some(element) = args.get(1).and_then(|arg| arg.parse::<Element>().ok()) else {
+            self.unsupported_count += 1;
+            return format!("Error: invalid element: {}", args.join(" "));
+        };
+        let Some(affinity) = args
+            .get(2)
+            .and_then(|arg| arg.parse::<ElementalAffinity>().ok())
+        else {
+            self.unsupported_count += 1;
+            return format!("Error: invalid element affinity: {}", args.join(" "));
+        };
+        if let ActorId::Monster(slot) = actor_id {
+            self.ensure_monster_slot(slot);
+        }
+        if let Some(actor) = self.actor_mut(actor_id) {
+            actor.set_elemental_affinity(element, affinity);
+        }
         format!("Element: {}", args.join(" "))
     }
 
@@ -984,6 +1011,7 @@ struct MonsterTemplate {
     immune_to_delay: bool,
     max_hp: i32,
     combat_stats: CombatStats,
+    elemental_affinities: std::collections::HashMap<Element, ElementalAffinity>,
 }
 
 fn monster_template(name: &str) -> MonsterTemplate {
@@ -1000,6 +1028,7 @@ fn monster_template(name: &str) -> MonsterTemplate {
                 magic_defense: stats.magic_defense,
                 base_weapon_damage: stats.base_weapon_damage,
             },
+            elemental_affinities: stats.elemental_affinities,
         })
         .unwrap_or_else(|| MonsterTemplate {
             key: name.to_string(),
@@ -1007,6 +1036,7 @@ fn monster_template(name: &str) -> MonsterTemplate {
             immune_to_delay: false,
             max_hp: 1_000,
             combat_stats: CombatStats::default(),
+            elemental_affinities: crate::battle::neutral_elemental_affinities(),
         })
 }
 
@@ -1159,6 +1189,7 @@ fn apply_damage_status_modifiers(
     target: &BattleActor,
     action: &ActionData,
 ) -> i32 {
+    damage = apply_elemental_modifiers(damage, user, target, action);
     if target.statuses.contains(&Status::Boost) {
         damage = damage * 3 / 2;
     }
@@ -1188,6 +1219,54 @@ fn apply_damage_status_modifiers(
         }
     }
     damage.min(9999)
+}
+
+fn apply_elemental_modifiers(
+    mut damage: i32,
+    user: &BattleActor,
+    target: &BattleActor,
+    action: &ActionData,
+) -> i32 {
+    let mut elements = action.elements.iter().copied().collect::<Vec<_>>();
+    if action.uses_weapon_properties {
+        for element in &user.weapon_elements {
+            if !elements.contains(element) {
+                elements.push(*element);
+            }
+        }
+    }
+    if elements.is_empty() {
+        return damage;
+    }
+    let mut strongest = ElementalAffinity::Absorbs;
+    let mut extra_weaknesses = 0;
+    for element in elements {
+        let affinity = target
+            .elemental_affinities
+            .get(&element)
+            .copied()
+            .unwrap_or(ElementalAffinity::Neutral);
+        if strongest == ElementalAffinity::Weak && affinity == ElementalAffinity::Weak {
+            extra_weaknesses += 1;
+        } else if affinity.modifier_value() > strongest.modifier_value() {
+            strongest = affinity;
+        }
+    }
+    damage = apply_elemental_affinity_modifier(damage, strongest);
+    for _ in 0..extra_weaknesses {
+        damage = apply_elemental_affinity_modifier(damage, ElementalAffinity::Weak);
+    }
+    damage
+}
+
+fn apply_elemental_affinity_modifier(damage: i32, affinity: ElementalAffinity) -> i32 {
+    match affinity {
+        ElementalAffinity::Absorbs => -damage,
+        ElementalAffinity::Immune => 0,
+        ElementalAffinity::Resists => damage / 2,
+        ElementalAffinity::Weak => damage * 3 / 2,
+        ElementalAffinity::Neutral => damage,
+    }
 }
 
 fn is_physical_formula(formula: DamageFormula) -> bool {
@@ -1254,6 +1333,100 @@ fn apply_auto_statuses(actor: &mut BattleActor) {
         if actor.has_auto_ability(ability) {
             actor.statuses.insert(status);
         }
+    }
+}
+
+fn apply_equipment_elements(actor: &mut BattleActor) {
+    let weapon_elements = actor
+        .weapon_abilities
+        .iter()
+        .filter_map(|ability| weapon_element(*ability))
+        .collect::<HashSet<_>>();
+    actor.set_weapon_elements(weapon_elements);
+
+    for element in [
+        Element::Fire,
+        Element::Ice,
+        Element::Thunder,
+        Element::Water,
+    ] {
+        actor.set_elemental_affinity(element, ElementalAffinity::Neutral);
+    }
+    for (ability, element, affinity) in [
+        (
+            AutoAbility::FireWard,
+            Element::Fire,
+            ElementalAffinity::Resists,
+        ),
+        (
+            AutoAbility::IceWard,
+            Element::Ice,
+            ElementalAffinity::Resists,
+        ),
+        (
+            AutoAbility::LightningWard,
+            Element::Thunder,
+            ElementalAffinity::Resists,
+        ),
+        (
+            AutoAbility::WaterWard,
+            Element::Water,
+            ElementalAffinity::Resists,
+        ),
+        (
+            AutoAbility::Fireproof,
+            Element::Fire,
+            ElementalAffinity::Immune,
+        ),
+        (
+            AutoAbility::Iceproof,
+            Element::Ice,
+            ElementalAffinity::Immune,
+        ),
+        (
+            AutoAbility::Lightningproof,
+            Element::Thunder,
+            ElementalAffinity::Immune,
+        ),
+        (
+            AutoAbility::Waterproof,
+            Element::Water,
+            ElementalAffinity::Immune,
+        ),
+        (
+            AutoAbility::FireEater,
+            Element::Fire,
+            ElementalAffinity::Absorbs,
+        ),
+        (
+            AutoAbility::IceEater,
+            Element::Ice,
+            ElementalAffinity::Absorbs,
+        ),
+        (
+            AutoAbility::LightningEater,
+            Element::Thunder,
+            ElementalAffinity::Absorbs,
+        ),
+        (
+            AutoAbility::WaterEater,
+            Element::Water,
+            ElementalAffinity::Absorbs,
+        ),
+    ] {
+        if actor.armor_abilities.contains(&ability) {
+            actor.set_elemental_affinity(element, affinity);
+        }
+    }
+}
+
+fn weapon_element(ability: AutoAbility) -> Option<Element> {
+    match ability {
+        AutoAbility::Firestrike => Some(Element::Fire),
+        AutoAbility::Icestrike => Some(Element::Ice),
+        AutoAbility::Lightningstrike => Some(Element::Thunder),
+        AutoAbility::Waterstrike => Some(Element::Water),
+        _ => None,
     }
 }
 
@@ -1325,7 +1498,7 @@ fn display_action_name(action: &str) -> String {
 mod tests {
     use super::{monster_template, simulate, SimulationState};
     use crate::battle::{ActorId, BattleActor};
-    use crate::model::{Buff, Character, MonsterSlot, Status};
+    use crate::model::{Buff, Character, Element, ElementalAffinity, MonsterSlot, Status};
 
     #[test]
     fn simulates_party_and_rng_commands_like_python() {
@@ -1589,5 +1762,81 @@ mod tests {
         let tidus = state.character_actor(Character::Tidus).unwrap();
         assert!(tidus.current_hp > 100);
         assert!(tidus.current_hp < tidus.max_hp);
+    }
+
+    #[test]
+    fn element_command_updates_actor_affinity() {
+        let mut state = SimulationState::new(1);
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+
+        state.change_element(&["m1".to_string(), "thunder".to_string(), "weak".to_string()]);
+
+        assert_eq!(
+            state.monsters[0]
+                .elemental_affinities
+                .get(&Element::Thunder),
+            Some(&ElementalAffinity::Weak)
+        );
+    }
+
+    #[test]
+    fn weapon_elements_apply_damage_affinities() {
+        let mut neutral_state = SimulationState::new(1);
+        neutral_state.change_equipment(
+            "weapon",
+            &[
+                "tidus".to_string(),
+                "1".to_string(),
+                "lightningstrike".to_string(),
+            ],
+        );
+        neutral_state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        let action_data =
+            neutral_state.action_data_for_actor(ActorId::Character(Character::Tidus), "attack");
+        neutral_state.apply_action_effects(
+            ActorId::Character(Character::Tidus),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+        let neutral_hp = neutral_state.monsters[0].current_hp;
+
+        let mut weak_state = SimulationState::new(1);
+        weak_state.change_equipment(
+            "weapon",
+            &[
+                "tidus".to_string(),
+                "1".to_string(),
+                "lightningstrike".to_string(),
+            ],
+        );
+        weak_state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        weak_state.change_element(&["m1".to_string(), "thunder".to_string(), "weak".to_string()]);
+        let action_data =
+            weak_state.action_data_for_actor(ActorId::Character(Character::Tidus), "attack");
+        weak_state.apply_action_effects(
+            ActorId::Character(Character::Tidus),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+
+        assert!(weak_state.monsters[0].current_hp < neutral_hp);
     }
 }

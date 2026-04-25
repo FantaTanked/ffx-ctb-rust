@@ -191,6 +191,64 @@ pub enum Buff {
     Jinx,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Element {
+    Fire,
+    Ice,
+    Thunder,
+    Water,
+}
+
+impl FromStr for Element {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_enum_name(value).as_str() {
+            "fire" => Ok(Self::Fire),
+            "ice" => Ok(Self::Ice),
+            "thunder" | "lightning" => Ok(Self::Thunder),
+            "water" => Ok(Self::Water),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ElementalAffinity {
+    Absorbs,
+    Immune,
+    Resists,
+    Weak,
+    Neutral,
+}
+
+impl ElementalAffinity {
+    pub fn modifier_value(self) -> i32 {
+        match self {
+            Self::Absorbs => -1,
+            Self::Immune => 0,
+            Self::Resists => 1,
+            Self::Neutral => 2,
+            Self::Weak => 3,
+        }
+    }
+}
+
+impl FromStr for ElementalAffinity {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_enum_name(value).as_str() {
+            "absorbs" | "absorb" => Ok(Self::Absorbs),
+            "immune" | "immunity" | "proof" => Ok(Self::Immune),
+            "resists" | "resist" | "ward" => Ok(Self::Resists),
+            "weak" | "weakness" => Ok(Self::Weak),
+            "neutral" => Ok(Self::Neutral),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AutoAbility {
     Sensor,
@@ -205,6 +263,18 @@ pub enum AutoAbility {
     Icestrike,
     Lightningstrike,
     Waterstrike,
+    FireWard,
+    IceWard,
+    LightningWard,
+    WaterWard,
+    Fireproof,
+    Iceproof,
+    Lightningproof,
+    Waterproof,
+    FireEater,
+    IceEater,
+    LightningEater,
+    WaterEater,
     Slowtouch,
     Deathtouch,
     Zombietouch,
@@ -221,7 +291,6 @@ pub enum AutoAbility {
     Sleepstrike,
     Silencestrike,
     Darkstrike,
-    Lightningproof,
     AutoShell,
     AutoProtect,
     AutoHaste,
@@ -246,6 +315,18 @@ impl FromStr for AutoAbility {
             "icestrike" => Ok(Self::Icestrike),
             "lightningstrike" => Ok(Self::Lightningstrike),
             "waterstrike" => Ok(Self::Waterstrike),
+            "fire_ward" | "fireward" => Ok(Self::FireWard),
+            "ice_ward" | "iceward" => Ok(Self::IceWard),
+            "lightning_ward" | "lightningward" => Ok(Self::LightningWard),
+            "water_ward" | "waterward" => Ok(Self::WaterWard),
+            "fireproof" => Ok(Self::Fireproof),
+            "iceproof" => Ok(Self::Iceproof),
+            "lightningproof" => Ok(Self::Lightningproof),
+            "waterproof" => Ok(Self::Waterproof),
+            "fire_eater" | "fireeater" => Ok(Self::FireEater),
+            "ice_eater" | "iceeater" => Ok(Self::IceEater),
+            "lightning_eater" | "lightningeater" => Ok(Self::LightningEater),
+            "water_eater" | "watereater" => Ok(Self::WaterEater),
             "slowtouch" => Ok(Self::Slowtouch),
             "deathtouch" => Ok(Self::Deathtouch),
             "zombietouch" => Ok(Self::Zombietouch),
@@ -262,7 +343,6 @@ impl FromStr for AutoAbility {
             "sleepstrike" => Ok(Self::Sleepstrike),
             "silencestrike" => Ok(Self::Silencestrike),
             "darkstrike" => Ok(Self::Darkstrike),
-            "lightningproof" => Ok(Self::Lightningproof),
             "auto_shell" => Ok(Self::AutoShell),
             "auto_protect" => Ok(Self::AutoProtect),
             "auto_haste" => Ok(Self::AutoHaste),

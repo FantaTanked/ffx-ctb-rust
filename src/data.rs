@@ -3,7 +3,9 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use crate::model::{Buff, Character, EncounterCondition, MonsterSlot, Status};
+use crate::model::{
+    Buff, Character, Element, ElementalAffinity, EncounterCondition, MonsterSlot, Status,
+};
 
 const FORMATIONS_JSON: &str = include_str!("../data/formations.json");
 const CHARACTERS_JSON: &str = include_str!("../data/characters.json");
@@ -36,6 +38,7 @@ pub struct MonsterStats {
     pub magic: i32,
     pub magic_defense: i32,
     pub base_weapon_damage: i32,
+    pub elemental_affinities: HashMap<Element, ElementalAffinity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +86,7 @@ pub struct ActionData {
     pub damages_hp: bool,
     pub damages_mp: bool,
     pub damages_ctb: bool,
+    pub elements: Vec<Element>,
     pub removes_statuses: bool,
     pub has_weak_delay: bool,
     pub has_strong_delay: bool,
@@ -404,6 +408,7 @@ fn parse_actions() -> HashMap<String, ActionData> {
                 damages_hp: row.get(35).copied().unwrap_or_default() & 0x01 != 0,
                 damages_mp: row.get(35).copied().unwrap_or_default() & 0x02 != 0,
                 damages_ctb: row.get(35).copied().unwrap_or_default() & 0x04 != 0,
+                elements: parse_action_elements(&row),
                 removes_statuses: row[32] & 0x20 != 0,
                 has_weak_delay: row[29] & 0x20 != 0,
                 has_strong_delay: row[29] & 0x40 != 0,
@@ -430,6 +435,25 @@ fn parse_actions() -> HashMap<String, ActionData> {
     }
 
     actions
+}
+
+fn parse_action_elements(row: &[u8]) -> Vec<Element> {
+    let flags = row.get(45).copied().unwrap_or_default();
+    [
+        Element::Fire,
+        Element::Ice,
+        Element::Thunder,
+        Element::Water,
+    ]
+    .into_iter()
+    .enumerate()
+    .filter_map(|(index, element)| {
+        if flags & (1 << index) == 0 {
+            return None;
+        }
+        Some(element)
+    })
+    .collect()
 }
 
 fn parse_action_buffs(row: &[u8]) -> Vec<ActionBuff> {
@@ -709,11 +733,39 @@ fn parse_monsters() -> HashMap<String, MonsterStats> {
                 magic: data[34] as i32,
                 magic_defense: data[35] as i32,
                 base_weapon_damage: data[176] as i32,
+                elemental_affinities: parse_monster_elemental_affinities(&data),
             },
         );
     }
 
     monsters
+}
+
+fn parse_monster_elemental_affinities(data: &[u8]) -> HashMap<Element, ElementalAffinity> {
+    let elements = [
+        Element::Fire,
+        Element::Ice,
+        Element::Thunder,
+        Element::Water,
+    ];
+    elements
+        .into_iter()
+        .enumerate()
+        .map(|(index, element)| {
+            let affinity = if data.get(43).copied().unwrap_or_default() & (1 << index) != 0 {
+                ElementalAffinity::Absorbs
+            } else if data.get(44).copied().unwrap_or_default() & (1 << index) != 0 {
+                ElementalAffinity::Immune
+            } else if data.get(45).copied().unwrap_or_default() & (1 << index) != 0 {
+                ElementalAffinity::Resists
+            } else if data.get(46).copied().unwrap_or_default() & (1 << index) != 0 {
+                ElementalAffinity::Weak
+            } else {
+                ElementalAffinity::Neutral
+            };
+            (element, affinity)
+        })
+        .collect()
 }
 
 fn parse_text_characters() -> HashMap<u8, String> {
@@ -823,7 +875,7 @@ mod tests {
         action_data, boss_or_simulated_formation, character_stats, monster_stats, random_formation,
         ActionTarget, DamageFormula,
     };
-    use crate::model::{Buff, Character, EncounterCondition, Status};
+    use crate::model::{Buff, Character, Element, ElementalAffinity, EncounterCondition, Status};
 
     #[test]
     fn loads_boss_formations_from_upstream_data() {
@@ -855,6 +907,10 @@ mod tests {
         assert_eq!(sahagin.agility, 5);
         assert_eq!(sahagin.strength, 3);
         assert_eq!(sahagin.base_weapon_damage, 0);
+        assert_eq!(
+            sahagin.elemental_affinities.get(&Element::Thunder),
+            Some(&ElementalAffinity::Weak)
+        );
     }
 
     #[test]
@@ -894,6 +950,9 @@ mod tests {
         ));
         assert!(grenade.damages_hp);
         assert!(!grenade.uses_weapon_properties);
+
+        let fire = action_data("fire").unwrap();
+        assert!(fire.elements.contains(&Element::Fire));
 
         let haste = action_data("haste").unwrap();
         assert_eq!(haste.target, ActionTarget::Single);
