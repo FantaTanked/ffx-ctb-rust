@@ -99,6 +99,7 @@ pub struct ActionData {
     pub uses_weapon_properties: bool,
     pub ignores_armored: bool,
     pub drains: bool,
+    pub misses_if_target_alive: bool,
     pub heals: bool,
     pub damages_hp: bool,
     pub damages_mp: bool,
@@ -442,6 +443,7 @@ fn parse_actions() -> HashMap<String, ActionData> {
                 uses_weapon_properties: row[30] & 0x04 != 0,
                 ignores_armored: row[30] & 0x01 != 0,
                 drains: row[29] & 0x01 != 0,
+                misses_if_target_alive: row[30] & 0x80 != 0,
                 heals: row[32] & 0x10 != 0,
                 damages_hp: row.get(35).copied().unwrap_or_default() & 0x01 != 0,
                 damages_mp: row.get(35).copied().unwrap_or_default() & 0x02 != 0,
@@ -1168,6 +1170,9 @@ mod tests {
 
         let drain_touch = action_data("drain_touch").unwrap();
         assert!(drain_touch.drains);
+
+        let phoenix_down = action_data("phoenix_down").unwrap();
+        assert!(phoenix_down.misses_if_target_alive);
 
         let attack = action_data("attack").unwrap();
         assert_eq!(attack.damage_formula, DamageFormula::Strength);

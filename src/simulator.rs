@@ -381,6 +381,9 @@ impl SimulationState {
         let user_actor = self.actor(user).cloned();
         let targets = self.resolve_action_targets(user, &action_data, args);
         for target in targets {
+            if action_misses_target(action_data, self.actor(target)) {
+                continue;
+            }
             if let Some(user_actor) = user_actor.as_ref() {
                 self.apply_action_damage(user_actor, target, action_data);
             }
@@ -750,9 +753,6 @@ impl SimulationState {
         let Some(actor) = self.actor_mut(target) else {
             return;
         };
-        if !actor.statuses.remove(&status) {
-            return;
-        }
         if status == Status::Death {
             if actor.statuses.contains(&Status::Zombie) {
                 if !actor.immune_to_life {
@@ -763,8 +763,15 @@ impl SimulationState {
                 }
                 return;
             }
+            if !actor.statuses.remove(&status) {
+                return;
+            }
             actor.current_hp = actor.max_hp.max(1);
             actor.ctb = actor.base_ctb() * 3;
+            return;
+        }
+        if !actor.statuses.remove(&status) {
+            return;
         }
     }
 
@@ -1266,6 +1273,13 @@ fn calculate_action_damage(user: &BattleActor, target: &BattleActor, action: &Ac
     } else {
         damage
     }
+}
+
+fn action_misses_target(action: &ActionData, target: Option<&BattleActor>) -> bool {
+    action.misses_if_target_alive
+        && target.is_some_and(|target| {
+            !target.statuses.contains(&Status::Death) && !target.statuses.contains(&Status::Zombie)
+        })
 }
 
 fn stat_based_action_damage(
@@ -2218,7 +2232,50 @@ mod tests {
         immune_state.remove_status_from_actor(ActorId::Monster(MonsterSlot(1)), Status::Death);
 
         assert_eq!(immune_state.monsters[0].current_hp, 1_000);
-        assert!(!immune_state.monsters[0].statuses.contains(&Status::Death));
+        assert!(immune_state.monsters[0].statuses.contains(&Status::Death));
         assert!(immune_state.monsters[0].statuses.contains(&Status::Zombie));
+    }
+
+    #[test]
+    fn life_actions_miss_living_non_zombie_targets() {
+        let mut state = SimulationState::new(1);
+        let tidus = state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap();
+        tidus.current_hp = 100;
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Lulu), "phoenix_down");
+
+        state.apply_action_effects(
+            ActorId::Character(Character::Lulu),
+            action_data.as_ref(),
+            &[String::from("tidus")],
+        );
+
+        assert_eq!(
+            state.character_actor(Character::Tidus).unwrap().current_hp,
+            100
+        );
+    }
+
+    #[test]
+    fn life_actions_can_kill_living_zombie_targets() {
+        let mut state = SimulationState::new(1);
+        let tidus = state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap();
+        tidus.statuses.insert(Status::Zombie);
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Lulu), "phoenix_down");
+
+        state.apply_action_effects(
+            ActorId::Character(Character::Lulu),
+            action_data.as_ref(),
+            &[String::from("tidus")],
+        );
+
+        let tidus = state.character_actor(Character::Tidus).unwrap();
+        assert_eq!(tidus.current_hp, 0);
+        assert!(tidus.statuses.contains(&Status::Death));
     }
 }
