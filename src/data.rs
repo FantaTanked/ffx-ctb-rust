@@ -44,6 +44,7 @@ pub struct MonsterStats {
     pub magic_defense: i32,
     pub base_weapon_damage: i32,
     pub elemental_affinities: HashMap<Element, ElementalAffinity>,
+    pub auto_statuses: Vec<Status>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -766,11 +767,89 @@ fn parse_monsters() -> HashMap<String, MonsterStats> {
                 magic_defense: data[35] as i32,
                 base_weapon_damage: data[176] as i32,
                 elemental_affinities: parse_monster_elemental_affinities(&data),
+                auto_statuses: parse_monster_auto_statuses(&data),
             },
         );
     }
 
     monsters
+}
+
+fn parse_monster_auto_statuses(data: &[u8]) -> Vec<Status> {
+    const PYTHON_STATUS_ORDER: [&str; 47] = [
+        "death",
+        "zombie",
+        "petrify",
+        "poison",
+        "power_break",
+        "magic_break",
+        "armor_break",
+        "mental_break",
+        "confuse",
+        "berserk",
+        "provoke",
+        "threaten",
+        "sleep",
+        "silence",
+        "dark",
+        "shell",
+        "protect",
+        "reflect",
+        "nultide",
+        "nulblaze",
+        "nulshock",
+        "nulfrost",
+        "regen",
+        "haste",
+        "slow",
+        "scan",
+        "power_distiller",
+        "mana_distiller",
+        "speed_distiller",
+        "ability_distiller",
+        "shield",
+        "boost",
+        "eject",
+        "autolife",
+        "curse",
+        "defend",
+        "guard",
+        "sentinel",
+        "doom",
+        "max_hp_x_2",
+        "max_mp_x_2",
+        "mp_0",
+        "damage_9999",
+        "critical",
+        "overdrive_x_1_5",
+        "overdrive_x_2",
+        "unused",
+    ];
+    let flags = (72..78)
+        .enumerate()
+        .map(|(position, index)| {
+            u64::from(data.get(index).copied().unwrap_or_default()) << (position * 8)
+        })
+        .sum::<u64>();
+    PYTHON_STATUS_ORDER
+        .iter()
+        .enumerate()
+        .filter_map(|(mut bit_index, name)| {
+            if bit_index > 14 {
+                bit_index += 4;
+            }
+            if bit_index > 28 {
+                bit_index += 3;
+            }
+            if bit_index > 35 {
+                bit_index += 1;
+            }
+            if bit_index > 46 || flags & (1_u64 << bit_index) == 0 {
+                return None;
+            }
+            name.parse::<Status>().ok()
+        })
+        .collect()
 }
 
 fn parse_monster_elemental_affinities(data: &[u8]) -> HashMap<Element, ElementalAffinity> {
@@ -1006,5 +1085,16 @@ mod tests {
     fn loads_monster_action_target_overrides() {
         let blender = super::monster_action_data("sinspawn_echuilles", "blender").unwrap();
         assert_eq!(blender.target, ActionTarget::CharactersParty);
+    }
+
+    #[test]
+    fn parses_monster_auto_status_bits_in_python_order() {
+        let mut data = vec![0_u8; 78];
+        data[72] = 0b0000_0001;
+
+        assert_eq!(
+            super::parse_monster_auto_statuses(&data),
+            vec![Status::Death]
+        );
     }
 }

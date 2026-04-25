@@ -216,6 +216,7 @@ impl SimulationState {
             actor.set_combat_stats(template.combat_stats);
             actor.set_elemental_affinities(template.elemental_affinities.clone());
             apply_damage_traits(&mut actor, template);
+            apply_template_auto_statuses(&mut actor, template);
             self.monsters.push(actor);
         }
         self.advance_duplicate_monster_rngs(&templates);
@@ -466,6 +467,7 @@ impl SimulationState {
         actor.set_combat_stats(template.combat_stats);
         actor.set_elemental_affinities(template.elemental_affinities.clone());
         apply_damage_traits(&mut actor, &template);
+        apply_template_auto_statuses(&mut actor, &template);
         if let Some(ctb) = forced_ctb {
             actor.ctb = ctb;
         }
@@ -1019,6 +1021,7 @@ struct MonsterTemplate {
     immune_to_percentage_damage: bool,
     immune_to_physical_damage: bool,
     immune_to_magical_damage: bool,
+    auto_statuses: Vec<Status>,
 }
 
 fn monster_template(name: &str) -> MonsterTemplate {
@@ -1041,6 +1044,7 @@ fn monster_template(name: &str) -> MonsterTemplate {
             immune_to_percentage_damage: stats.immune_to_percentage_damage,
             immune_to_physical_damage: stats.immune_to_physical_damage,
             immune_to_magical_damage: stats.immune_to_magical_damage,
+            auto_statuses: stats.auto_statuses,
         })
         .unwrap_or_else(|| MonsterTemplate {
             key: name.to_string(),
@@ -1054,6 +1058,7 @@ fn monster_template(name: &str) -> MonsterTemplate {
             immune_to_percentage_damage: false,
             immune_to_physical_damage: false,
             immune_to_magical_damage: false,
+            auto_statuses: Vec::new(),
         })
 }
 
@@ -1063,6 +1068,12 @@ fn apply_damage_traits(actor: &mut BattleActor, template: &MonsterTemplate) {
     actor.immune_to_percentage_damage = template.immune_to_percentage_damage;
     actor.immune_to_physical_damage = template.immune_to_physical_damage;
     actor.immune_to_magical_damage = template.immune_to_magical_damage;
+}
+
+fn apply_template_auto_statuses(actor: &mut BattleActor, template: &MonsterTemplate) {
+    for status in &template.auto_statuses {
+        actor.statuses.insert(*status);
+    }
 }
 
 fn fallback_action_rank(action: &str) -> i32 {
