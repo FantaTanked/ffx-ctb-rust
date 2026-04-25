@@ -710,6 +710,18 @@ impl SimulationState {
                 .map(|actor| actor.id)
                 .into_iter()
                 .collect(),
+            ActionTarget::HighestHpCharacter => {
+                self.party_character_by_metric(true, |actor| actor.current_hp)
+            }
+            ActionTarget::LowestHpCharacter => {
+                self.party_character_by_metric(false, |actor| actor.current_hp)
+            }
+            ActionTarget::HighestStrengthCharacter => {
+                self.party_character_by_metric(true, |actor| actor.combat_stats.strength)
+            }
+            ActionTarget::LowestMagicDefenseCharacter => {
+                self.party_character_by_metric(false, |actor| actor.combat_stats.magic_defense)
+            }
             ActionTarget::RandomCharacterWith(status) => self
                 .party
                 .iter()
@@ -756,6 +768,34 @@ impl SimulationState {
             ActionTarget::Monster(slot) => vec![ActorId::Monster(slot)],
             ActionTarget::Single | ActionTarget::EitherParty | ActionTarget::None => Vec::new(),
         }
+    }
+
+    fn party_character_by_metric(
+        &self,
+        prefer_high: bool,
+        metric: impl Fn(&BattleActor) -> i32,
+    ) -> Vec<ActorId> {
+        let mut selected = None;
+        for character in &self.party {
+            let actor_id = ActorId::Character(*character);
+            let Some(actor) = self.actor(actor_id) else {
+                continue;
+            };
+            let value = metric(actor);
+            let should_replace = selected
+                .map(|(_, selected_value)| {
+                    if prefer_high {
+                        value > selected_value
+                    } else {
+                        value < selected_value
+                    }
+                })
+                .unwrap_or(true);
+            if should_replace {
+                selected = Some((actor_id, value));
+            }
+        }
+        selected.map(|(actor_id, _)| actor_id).into_iter().collect()
     }
 
     fn apply_status_to_actor(&mut self, target: ActorId, status: Status) {
@@ -2140,6 +2180,82 @@ mod tests {
         assert_eq!(
             state.resolve_action_targets(ActorId::Character(Character::Tidus), &action, &[]),
             vec![ActorId::Monster(MonsterSlot(2))]
+        );
+    }
+
+    #[test]
+    fn stat_ranked_character_targets_use_actor_data() {
+        let mut state = SimulationState::new(1);
+        state.party = vec![Character::Tidus, Character::Yuna, Character::Auron];
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .current_hp = 300;
+        state
+            .actor_mut(ActorId::Character(Character::Yuna))
+            .unwrap()
+            .current_hp = 900;
+        state
+            .actor_mut(ActorId::Character(Character::Auron))
+            .unwrap()
+            .current_hp = 100;
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .combat_stats
+            .strength = 40;
+        state
+            .actor_mut(ActorId::Character(Character::Auron))
+            .unwrap()
+            .combat_stats
+            .strength = 80;
+        state
+            .actor_mut(ActorId::Character(Character::Yuna))
+            .unwrap()
+            .combat_stats
+            .magic_defense = 5;
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .combat_stats
+            .magic_defense = 15;
+        state
+            .actor_mut(ActorId::Character(Character::Auron))
+            .unwrap()
+            .combat_stats
+            .magic_defense = 20;
+
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Monster(MonsterSlot(1)),
+                &test_action(ActionTarget::HighestHpCharacter),
+                &[]
+            ),
+            vec![ActorId::Character(Character::Yuna)]
+        );
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Monster(MonsterSlot(1)),
+                &test_action(ActionTarget::LowestHpCharacter),
+                &[]
+            ),
+            vec![ActorId::Character(Character::Auron)]
+        );
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Monster(MonsterSlot(1)),
+                &test_action(ActionTarget::HighestStrengthCharacter),
+                &[]
+            ),
+            vec![ActorId::Character(Character::Auron)]
+        );
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Monster(MonsterSlot(1)),
+                &test_action(ActionTarget::LowestMagicDefenseCharacter),
+                &[]
+            ),
+            vec![ActorId::Character(Character::Yuna)]
         );
     }
 

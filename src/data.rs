@@ -77,6 +77,10 @@ pub enum ActionTarget {
     SingleMonster,
     RandomCharacter,
     RandomMonster,
+    HighestHpCharacter,
+    LowestHpCharacter,
+    HighestStrengthCharacter,
+    LowestMagicDefenseCharacter,
     RandomCharacterWith(Status),
     RandomCharacterWithout(Status),
     RandomCharacterWithoutEither(Status, Status),
@@ -726,13 +730,13 @@ fn parse_named_action_target(value: &str) -> Option<ActionTarget> {
         "Monsters' Party" => Some(ActionTarget::MonstersParty),
         "Single Character" => Some(ActionTarget::SingleCharacter),
         "Single Monster" => Some(ActionTarget::SingleMonster),
-        "Random Character"
-        | "Lowest HP Character"
-        | "Highest HP Character"
-        | "Highest Str Character"
-        | "Highest MP Character"
-        | "Lowest Mag Def Character"
-        | "Random Character (Not User) Damaged" => Some(ActionTarget::RandomCharacter),
+        "Random Character" | "Highest MP Character" | "Random Character (Not User) Damaged" => {
+            Some(ActionTarget::RandomCharacter)
+        }
+        "Lowest HP Character" => Some(ActionTarget::LowestHpCharacter),
+        "Highest HP Character" => Some(ActionTarget::HighestHpCharacter),
+        "Highest Str Character" => Some(ActionTarget::HighestStrengthCharacter),
+        "Lowest Mag Def Character" => Some(ActionTarget::LowestMagicDefenseCharacter),
         "Random Character Affected By Reflect" => {
             Some(ActionTarget::RandomCharacterWith(Status::Reflect))
         }
