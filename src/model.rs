@@ -191,6 +191,88 @@ pub enum Buff {
     Jinx,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AutoAbility {
+    Sensor,
+    FirstStrike,
+    Initiative,
+    Piercing,
+    Strength3,
+    Strength5,
+    Strength10,
+    Strength20,
+    Firestrike,
+    Icestrike,
+    Lightningstrike,
+    Waterstrike,
+    Slowtouch,
+    Deathtouch,
+    Zombietouch,
+    Stonetouch,
+    Poisontouch,
+    Sleeptouch,
+    Silencetouch,
+    Darktouch,
+    Slowstrike,
+    Deathstrike,
+    Zombiestrike,
+    Stonestrike,
+    Poisonstrike,
+    Sleepstrike,
+    Silencestrike,
+    Darkstrike,
+    Lightningproof,
+    AutoShell,
+    AutoProtect,
+    AutoHaste,
+    AutoRegen,
+    AutoReflect,
+}
+
+impl FromStr for AutoAbility {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_enum_name(value).as_str() {
+            "sensor" => Ok(Self::Sensor),
+            "first_strike" => Ok(Self::FirstStrike),
+            "initiative" => Ok(Self::Initiative),
+            "piercing" => Ok(Self::Piercing),
+            "strength_3" => Ok(Self::Strength3),
+            "strength_5" => Ok(Self::Strength5),
+            "strength_10" => Ok(Self::Strength10),
+            "strength_20" => Ok(Self::Strength20),
+            "firestrike" => Ok(Self::Firestrike),
+            "icestrike" => Ok(Self::Icestrike),
+            "lightningstrike" => Ok(Self::Lightningstrike),
+            "waterstrike" => Ok(Self::Waterstrike),
+            "slowtouch" => Ok(Self::Slowtouch),
+            "deathtouch" => Ok(Self::Deathtouch),
+            "zombietouch" => Ok(Self::Zombietouch),
+            "stonetouch" => Ok(Self::Stonetouch),
+            "poisontouch" => Ok(Self::Poisontouch),
+            "sleeptouch" => Ok(Self::Sleeptouch),
+            "silencetouch" => Ok(Self::Silencetouch),
+            "darktouch" => Ok(Self::Darktouch),
+            "slowstrike" => Ok(Self::Slowstrike),
+            "deathstrike" => Ok(Self::Deathstrike),
+            "zombiestrike" => Ok(Self::Zombiestrike),
+            "stonestrike" => Ok(Self::Stonestrike),
+            "poisonstrike" => Ok(Self::Poisonstrike),
+            "sleepstrike" => Ok(Self::Sleepstrike),
+            "silencestrike" => Ok(Self::Silencestrike),
+            "darkstrike" => Ok(Self::Darkstrike),
+            "lightningproof" => Ok(Self::Lightningproof),
+            "auto_shell" => Ok(Self::AutoShell),
+            "auto_protect" => Ok(Self::AutoProtect),
+            "auto_haste" => Ok(Self::AutoHaste),
+            "auto_regen" => Ok(Self::AutoRegen),
+            "auto_reflect" => Ok(Self::AutoReflect),
+            _ => Err(()),
+        }
+    }
+}
+
 impl FromStr for Buff {
     type Err = ();
 
@@ -250,6 +332,15 @@ impl FromStr for Status {
             _ => Err(()),
         }
     }
+}
+
+fn normalize_enum_name(value: &str) -> String {
+    value
+        .to_ascii_lowercase()
+        .replace([' ', '-', '%'], "_")
+        .replace('+', "")
+        .trim_matches('_')
+        .to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

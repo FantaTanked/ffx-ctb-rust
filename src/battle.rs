@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::model::{Buff, Character, MonsterSlot, Status};
+use crate::model::{AutoAbility, Buff, Character, MonsterSlot, Status};
 
 const ICV_BASE: [u16; 256] = [
     28, 28, 26, 24, 20, 16, 16, 15, 15, 15, 14, 14, 13, 13, 13, 12, 12, 11, 11, 10, 10, 10, 10, 9,
@@ -31,6 +31,8 @@ pub struct BattleActor {
     pub max_hp: i32,
     pub ctb: i32,
     pub buffs: HashMap<Buff, i32>,
+    pub weapon_abilities: HashSet<AutoAbility>,
+    pub armor_abilities: HashSet<AutoAbility>,
     pub statuses: HashSet<Status>,
 }
 
@@ -85,6 +87,8 @@ impl BattleActor {
             max_hp,
             ctb: 0,
             buffs: HashMap::new(),
+            weapon_abilities: HashSet::new(),
+            armor_abilities: HashSet::new(),
             statuses: HashSet::new(),
         }
     }
@@ -117,6 +121,18 @@ impl BattleActor {
     pub fn add_buff(&mut self, buff: Buff, amount: i32) {
         let value = self.buffs.get(&buff).copied().unwrap_or_default() + amount;
         self.buffs.insert(buff, value.clamp(0, 5));
+    }
+
+    pub fn set_weapon_abilities(&mut self, abilities: HashSet<AutoAbility>) {
+        self.weapon_abilities = abilities;
+    }
+
+    pub fn set_armor_abilities(&mut self, abilities: HashSet<AutoAbility>) {
+        self.armor_abilities = abilities;
+    }
+
+    pub fn has_auto_ability(&self, ability: AutoAbility) -> bool {
+        self.weapon_abilities.contains(&ability) || self.armor_abilities.contains(&ability)
     }
 }
 

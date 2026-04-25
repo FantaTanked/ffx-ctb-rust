@@ -1,9 +1,10 @@
 use crate::battle::{ActorId, BattleActor, BattleState};
 use crate::data::{self, ActionData, ActionTarget};
 use crate::encounter::{character_initial_ctb, encounter_condition_from_roll, monster_initial_ctb};
-use crate::model::{Buff, Character, EncounterCondition, MonsterSlot, Status};
+use crate::model::{AutoAbility, Buff, Character, EncounterCondition, MonsterSlot, Status};
 use crate::parser::{parse_raw_action_line, ParsedCommand};
 use crate::rng::FfxRngTracker;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct SimulationOutput {
@@ -139,9 +140,13 @@ impl SimulationState {
             self.set_party_from_initials(forced_party);
         }
         let condition_roll = self.rng.advance_rng(1);
+        let has_initiative = self.party.iter().any(|character| {
+            self.character_actor(*character)
+                .is_some_and(|actor| actor.has_auto_ability(AutoAbility::Initiative))
+        });
         let condition = encounter_condition_from_roll(
             condition_roll,
-            false,
+            has_initiative,
             formation
                 .as_ref()
                 .and_then(|formation| formation.forced_condition),
@@ -183,6 +188,7 @@ impl SimulationState {
             actor.ctb = 0;
             actor.buffs.clear();
             actor.statuses.clear();
+            apply_auto_statuses(actor);
         }
         self.monsters.clear();
     }
@@ -241,7 +247,7 @@ impl SimulationState {
                         condition,
                         None,
                         party.contains(&character_id(actor)),
-                        false,
+                        actor.has_auto_ability(AutoAbility::FirstStrike),
                     ) {
                         actor.ctb = ctb;
                     }
@@ -260,7 +266,7 @@ impl SimulationState {
                         condition,
                         Some(variance_roll),
                         party.contains(&character_id(actor)),
-                        false,
+                        actor.has_auto_ability(AutoAbility::FirstStrike),
                     ) {
                         actor.ctb = ctb;
                     }
@@ -380,6 +386,9 @@ impl SimulationState {
             for buff in &action_data.buffs {
                 self.apply_buff_to_actor(target, buff.buff, buff.amount);
             }
+            if action_data.uses_weapon_properties {
+                self.apply_weapon_statuses(user, target);
+            }
             if action_data.has_weak_delay {
                 self.apply_delay(target, 3, 2);
             }
@@ -390,7 +399,32 @@ impl SimulationState {
     }
 
     fn change_equipment(&mut self, kind: &str, args: &[String]) -> String {
-        format!("Equipment: {kind} {}", args.join(" "))
+        let Some(character) = args.first().and_then(|arg| arg.parse::<Character>().ok()) else {
+            self.unsupported_count += 1;
+            return format!("Error: invalid equipment actor: {kind} {}", args.join(" "));
+        };
+        let abilities = parse_equipment_abilities(args);
+        let Some(actor) = self.actor_mut(ActorId::Character(character)) else {
+            self.unsupported_count += 1;
+            return format!(
+                "Error: unknown equipment actor: {}",
+                character.display_name()
+            );
+        };
+        match kind.to_ascii_lowercase().as_str() {
+            "weapon" => actor.set_weapon_abilities(abilities),
+            "armor" => actor.set_armor_abilities(abilities),
+            _ => {
+                self.unsupported_count += 1;
+                return format!("Error: invalid equipment type: {kind}");
+            }
+        }
+        apply_auto_statuses(actor);
+        format!(
+            "Equipment: {kind} {} [{}]",
+            character.display_name(),
+            args.iter().skip(1).cloned().collect::<Vec<_>>().join(" ")
+        )
     }
 
     fn summon(&mut self, aeon_name: &str) -> String {
@@ -615,6 +649,20 @@ impl SimulationState {
             return;
         };
         actor.add_buff(buff, amount);
+    }
+
+    fn apply_weapon_statuses(&mut self, user: ActorId, target: ActorId) {
+        let Some(actor) = self.actor(user) else {
+            return;
+        };
+        let statuses = actor
+            .weapon_abilities
+            .iter()
+            .filter_map(|ability| weapon_status(*ability))
+            .collect::<Vec<_>>();
+        for status in statuses {
+            self.apply_status_to_actor(target, status);
+        }
     }
 
     fn heal_actor(&mut self, target: ActorId) {
@@ -925,6 +973,42 @@ fn parse_summon_name(name: &str) -> Option<Character> {
     }
 }
 
+fn parse_equipment_abilities(args: &[String]) -> HashSet<AutoAbility> {
+    args.iter()
+        .skip(2)
+        .filter_map(|ability| ability.parse::<AutoAbility>().ok())
+        .take(4)
+        .collect()
+}
+
+fn apply_auto_statuses(actor: &mut BattleActor) {
+    for (ability, status) in [
+        (AutoAbility::AutoShell, Status::Shell),
+        (AutoAbility::AutoProtect, Status::Protect),
+        (AutoAbility::AutoHaste, Status::Haste),
+        (AutoAbility::AutoRegen, Status::Regen),
+        (AutoAbility::AutoReflect, Status::Reflect),
+    ] {
+        if actor.has_auto_ability(ability) {
+            actor.statuses.insert(status);
+        }
+    }
+}
+
+fn weapon_status(ability: AutoAbility) -> Option<Status> {
+    match ability {
+        AutoAbility::Deathtouch | AutoAbility::Deathstrike => Some(Status::Death),
+        AutoAbility::Zombietouch | AutoAbility::Zombiestrike => Some(Status::Zombie),
+        AutoAbility::Stonetouch | AutoAbility::Stonestrike => Some(Status::Petrify),
+        AutoAbility::Poisontouch | AutoAbility::Poisonstrike => Some(Status::Poison),
+        AutoAbility::Sleeptouch | AutoAbility::Sleepstrike => Some(Status::Sleep),
+        AutoAbility::Silencetouch | AutoAbility::Silencestrike => Some(Status::Silence),
+        AutoAbility::Darktouch | AutoAbility::Darkstrike => Some(Status::Dark),
+        AutoAbility::Slowtouch | AutoAbility::Slowstrike => Some(Status::Slow),
+        _ => None,
+    }
+}
+
 fn parse_status(name: &str) -> Option<Status> {
     name.parse().ok()
 }
@@ -1051,7 +1135,7 @@ mod tests {
         assert!(output.text.contains("Element: m1 thunder weak"));
         assert!(output
             .text
-            .contains("Equipment: weapon tidus 4 strength_+5%"));
+            .contains("Equipment: weapon Tidus [4 strength_+5%]"));
         assert!(output.text.contains("Advanced rng4 1 times"));
         assert_eq!(output.unsupported_count, 0);
     }
@@ -1155,5 +1239,49 @@ mod tests {
                 ActorId::Character(Character::Wakka),
             ]
         );
+    }
+
+    #[test]
+    fn equipment_first_strike_skips_initial_character_ctb() {
+        let lines = vec![
+            "weapon tidus 1 first_strike".to_string(),
+            "encounter tanker".to_string(),
+        ];
+        let output = simulate(1, &lines);
+
+        assert!(output
+            .text
+            .contains("Equipment: weapon Tidus [1 first_strike]"));
+        assert!(output.text.contains("Ti[0]"));
+    }
+
+    #[test]
+    fn weapon_status_abilities_apply_to_weapon_actions() {
+        let mut state = SimulationState::new(1);
+        state.change_equipment(
+            "weapon",
+            &[
+                "tidus".to_string(),
+                "1".to_string(),
+                "slowtouch".to_string(),
+            ],
+        );
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Tidus), "attack");
+
+        state.apply_action_effects(
+            ActorId::Character(Character::Tidus),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+
+        assert!(state.monsters[0].statuses.contains(&Status::Slow));
     }
 }

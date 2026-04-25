@@ -18,6 +18,7 @@ Implemented:
 - Shallow route-continuity support for summon, spawn, stat/status edits, equipment, element edits, placeholder unknown encounters, and the default `ctb_actions_input.txt`
 - Static formation, character defaults, and action/monster data vendored from the upstream tracker into `data/`
 - Action metadata loading for ranks, status application, buffs, healing, delay flags, and monster-specific target overrides from the upstream bins
+- Shallow equipment ability handling for First Strike, Initiative, auto-statuses, and weapon status abilities
 - Verified `wasm-pack build --target web` output in `pkg/`
 - Local smoke-test fixture for the default route script under `fixtures/`
 
