@@ -62,6 +62,7 @@ pub struct BattleActor {
     pub armor_abilities: HashSet<AutoAbility>,
     pub weapon_elements: HashSet<Element>,
     pub elemental_affinities: HashMap<Element, ElementalAffinity>,
+    pub status_resistances: HashMap<Status, u8>,
     pub statuses: HashSet<Status>,
 }
 
@@ -126,6 +127,7 @@ impl BattleActor {
             armor_abilities: HashSet::new(),
             weapon_elements: HashSet::new(),
             elemental_affinities: neutral_elemental_affinities(),
+            status_resistances: HashMap::new(),
             statuses: HashSet::new(),
         }
     }
@@ -182,6 +184,10 @@ impl BattleActor {
 
     pub fn set_elemental_affinity(&mut self, element: Element, affinity: ElementalAffinity) {
         self.elemental_affinities.insert(element, affinity);
+    }
+
+    pub fn set_status_resistances(&mut self, resistances: HashMap<Status, u8>) {
+        self.status_resistances = resistances;
     }
 
     pub fn has_auto_ability(&self, ability: AutoAbility) -> bool {

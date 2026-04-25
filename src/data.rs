@@ -44,6 +44,7 @@ pub struct MonsterStats {
     pub magic_defense: i32,
     pub base_weapon_damage: i32,
     pub elemental_affinities: HashMap<Element, ElementalAffinity>,
+    pub status_resistances: HashMap<Status, u8>,
     pub auto_statuses: Vec<Status>,
 }
 
@@ -98,6 +99,7 @@ pub struct ActionData {
     pub removes_statuses: bool,
     pub has_weak_delay: bool,
     pub has_strong_delay: bool,
+    pub status_applications: Vec<ActionStatus>,
     pub statuses: Vec<Status>,
     pub buffs: Vec<ActionBuff>,
 }
@@ -172,6 +174,13 @@ impl DamageFormula {
 pub struct ActionBuff {
     pub buff: Buff,
     pub amount: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActionStatus {
+    pub status: Status,
+    pub chance: u8,
+    pub ignores_resistance: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,7 +438,11 @@ fn parse_actions() -> HashMap<String, ActionData> {
                 removes_statuses: row[32] & 0x20 != 0,
                 has_weak_delay: row[29] & 0x20 != 0,
                 has_strong_delay: row[29] & 0x40 != 0,
-                statuses: parse_action_statuses(&row),
+                status_applications: parse_action_status_applications(&row),
+                statuses: parse_action_status_applications(&row)
+                    .into_iter()
+                    .map(|application| application.status)
+                    .collect(),
                 buffs: parse_action_buffs(&row),
             });
         }
@@ -503,7 +516,7 @@ fn parse_action_buffs(row: &[u8]) -> Vec<ActionBuff> {
         .collect()
 }
 
-fn parse_action_statuses(row: &[u8]) -> Vec<Status> {
+fn parse_action_status_applications(row: &[u8]) -> Vec<ActionStatus> {
     const STATUS_ORDER: [&str; 25] = [
         "death",
         "zombie",
@@ -557,11 +570,16 @@ fn parse_action_statuses(row: &[u8]) -> Vec<Status> {
 
     let mut statuses = Vec::new();
     for (offset, name) in STATUS_ORDER.iter().enumerate() {
-        if row.get(46 + offset).copied().unwrap_or_default() == 0 {
+        let chance = row.get(46 + offset).copied().unwrap_or_default();
+        if chance == 0 {
             continue;
         }
         if let Ok(status) = name.parse::<Status>() {
-            statuses.push(status);
+            statuses.push(ActionStatus {
+                status,
+                chance,
+                ignores_resistance: chance == 255,
+            });
         }
     }
 
@@ -582,7 +600,11 @@ fn parse_action_statuses(row: &[u8]) -> Vec<Status> {
             continue;
         }
         if let Ok(status) = name.parse::<Status>() {
-            statuses.push(status);
+            statuses.push(ActionStatus {
+                status,
+                chance: 254,
+                ignores_resistance: false,
+            });
         }
     }
 
@@ -767,12 +789,88 @@ fn parse_monsters() -> HashMap<String, MonsterStats> {
                 magic_defense: data[35] as i32,
                 base_weapon_damage: data[176] as i32,
                 elemental_affinities: parse_monster_elemental_affinities(&data),
+                status_resistances: parse_monster_status_resistances(&data),
                 auto_statuses: parse_monster_auto_statuses(&data),
             },
         );
     }
 
     monsters
+}
+
+fn parse_monster_status_resistances(data: &[u8]) -> HashMap<Status, u8> {
+    const STATUS_ORDER: [&str; 25] = [
+        "death",
+        "zombie",
+        "petrify",
+        "poison",
+        "power_break",
+        "magic_break",
+        "armor_break",
+        "mental_break",
+        "confuse",
+        "berserk",
+        "provoke",
+        "threaten",
+        "sleep",
+        "silence",
+        "dark",
+        "shell",
+        "protect",
+        "reflect",
+        "nultide",
+        "nulblaze",
+        "nulshock",
+        "nulfrost",
+        "regen",
+        "haste",
+        "slow",
+    ];
+    let mut resistances = STATUS_ORDER
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| {
+            Some((
+                name.parse::<Status>().ok()?,
+                data.get(47 + index).copied().unwrap_or_default(),
+            ))
+        })
+        .collect::<HashMap<_, _>>();
+
+    let immunities = u16::from(data.get(78).copied().unwrap_or_default())
+        | (u16::from(data.get(79).copied().unwrap_or_default()) << 8);
+    for (mut bit_index, name) in [
+        "scan",
+        "power_distiller",
+        "mana_distiller",
+        "speed_distiller",
+        "ability_distiller",
+        "shield",
+        "boost",
+        "eject",
+        "autolife",
+        "curse",
+        "defend",
+        "guard",
+        "sentinel",
+        "doom",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if bit_index > 3 {
+            bit_index += 1;
+        }
+        let resistance = if immunities & (1 << bit_index) == 0 {
+            0
+        } else {
+            255
+        };
+        if let Ok(status) = name.parse::<Status>() {
+            resistances.insert(status, resistance);
+        }
+    }
+    resistances
 }
 
 fn parse_monster_auto_statuses(data: &[u8]) -> Vec<Status> {

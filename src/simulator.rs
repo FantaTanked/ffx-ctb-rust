@@ -215,6 +215,7 @@ impl SimulationState {
             );
             actor.set_combat_stats(template.combat_stats);
             actor.set_elemental_affinities(template.elemental_affinities.clone());
+            actor.set_status_resistances(template.status_resistances.clone());
             apply_damage_traits(&mut actor, template);
             apply_template_auto_statuses(&mut actor, template);
             self.monsters.push(actor);
@@ -388,8 +389,8 @@ impl SimulationState {
                     self.remove_status_from_actor(target, *status);
                 }
             } else {
-                for status in &action_data.statuses {
-                    self.apply_status_to_actor(target, *status);
+                for application in &action_data.status_applications {
+                    self.apply_action_status_to_actor(target, application);
                 }
             }
             if action_data.heals && !action_data.damages_hp {
@@ -466,6 +467,7 @@ impl SimulationState {
         );
         actor.set_combat_stats(template.combat_stats);
         actor.set_elemental_affinities(template.elemental_affinities.clone());
+        actor.set_status_resistances(template.status_resistances.clone());
         apply_damage_traits(&mut actor, &template);
         apply_template_auto_statuses(&mut actor, &template);
         if let Some(ctb) = forced_ctb {
@@ -667,6 +669,18 @@ impl SimulationState {
                 actor.statuses.insert(other);
             }
         }
+    }
+
+    fn apply_action_status_to_actor(&mut self, target: ActorId, application: &data::ActionStatus) {
+        if self
+            .actor(target)
+            .and_then(|actor| actor.status_resistances.get(&application.status))
+            .is_some_and(|resistance| *resistance == 255)
+            && !application.ignores_resistance
+        {
+            return;
+        }
+        self.apply_status_to_actor(target, application.status);
     }
 
     fn remove_status_from_actor(&mut self, target: ActorId, status: Status) {
@@ -1016,6 +1030,7 @@ struct MonsterTemplate {
     max_hp: i32,
     combat_stats: CombatStats,
     elemental_affinities: std::collections::HashMap<Element, ElementalAffinity>,
+    status_resistances: std::collections::HashMap<Status, u8>,
     armored: bool,
     immune_to_damage: bool,
     immune_to_percentage_damage: bool,
@@ -1039,6 +1054,7 @@ fn monster_template(name: &str) -> MonsterTemplate {
                 base_weapon_damage: stats.base_weapon_damage,
             },
             elemental_affinities: stats.elemental_affinities,
+            status_resistances: stats.status_resistances,
             armored: stats.armored,
             immune_to_damage: stats.immune_to_damage,
             immune_to_percentage_damage: stats.immune_to_percentage_damage,
@@ -1053,6 +1069,7 @@ fn monster_template(name: &str) -> MonsterTemplate {
             max_hp: 1_000,
             combat_stats: CombatStats::default(),
             elemental_affinities: crate::battle::neutral_elemental_affinities(),
+            status_resistances: std::collections::HashMap::new(),
             armored: false,
             immune_to_damage: false,
             immune_to_percentage_damage: false,
@@ -1651,6 +1668,30 @@ mod tests {
         );
 
         assert!(state.monsters[0].statuses.contains(&Status::Dark));
+    }
+
+    #[test]
+    fn status_immunity_blocks_action_statuses() {
+        let mut state = SimulationState::new(1);
+        let mut monster = BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("tanker".to_string()),
+            10,
+            false,
+            1_000,
+        );
+        monster.status_resistances.insert(Status::Dark, 255);
+        state.monsters.push(monster);
+
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Wakka), "dark_attack");
+        state.apply_action_effects(
+            ActorId::Character(Character::Wakka),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+
+        assert!(!state.monsters[0].statuses.contains(&Status::Dark));
     }
 
     #[test]
