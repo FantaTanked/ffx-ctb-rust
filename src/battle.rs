@@ -26,6 +26,9 @@ pub struct CombatStats {
     pub defense: i32,
     pub magic: i32,
     pub magic_defense: i32,
+    pub luck: i32,
+    pub evasion: i32,
+    pub accuracy: i32,
     pub base_weapon_damage: i32,
 }
 
@@ -36,6 +39,9 @@ impl Default for CombatStats {
             defense: 10,
             magic: 10,
             magic_defense: 10,
+            luck: 1,
+            evasion: 0,
+            accuracy: 10,
             base_weapon_damage: 16,
         }
     }

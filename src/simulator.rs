@@ -544,6 +544,69 @@ impl SimulationState {
                 actor.agility = agility as u8;
                 format!("Stat: {} Agility -> {}", actor_label(actor), actor.agility)
             }
+            Some("strength") => {
+                actor.combat_stats.strength =
+                    parse_signed_amount(amount, actor.combat_stats.strength).clamp(0, 255);
+                format!(
+                    "Stat: {} Strength -> {}",
+                    actor_label(actor),
+                    actor.combat_stats.strength
+                )
+            }
+            Some("defense") => {
+                actor.combat_stats.defense =
+                    parse_signed_amount(amount, actor.combat_stats.defense).clamp(0, 255);
+                format!(
+                    "Stat: {} Defense -> {}",
+                    actor_label(actor),
+                    actor.combat_stats.defense
+                )
+            }
+            Some("magic") => {
+                actor.combat_stats.magic =
+                    parse_signed_amount(amount, actor.combat_stats.magic).clamp(0, 255);
+                format!(
+                    "Stat: {} Magic -> {}",
+                    actor_label(actor),
+                    actor.combat_stats.magic
+                )
+            }
+            Some("magic_defense" | "magic_def") => {
+                actor.combat_stats.magic_defense =
+                    parse_signed_amount(amount, actor.combat_stats.magic_defense).clamp(0, 255);
+                format!(
+                    "Stat: {} Magic defense -> {}",
+                    actor_label(actor),
+                    actor.combat_stats.magic_defense
+                )
+            }
+            Some("luck") => {
+                actor.combat_stats.luck =
+                    parse_signed_amount(amount, actor.combat_stats.luck).clamp(0, 255);
+                format!(
+                    "Stat: {} Luck -> {}",
+                    actor_label(actor),
+                    actor.combat_stats.luck
+                )
+            }
+            Some("evasion") => {
+                actor.combat_stats.evasion =
+                    parse_signed_amount(amount, actor.combat_stats.evasion).clamp(0, 255);
+                format!(
+                    "Stat: {} Evasion -> {}",
+                    actor_label(actor),
+                    actor.combat_stats.evasion
+                )
+            }
+            Some("accuracy") => {
+                actor.combat_stats.accuracy =
+                    parse_signed_amount(amount, actor.combat_stats.accuracy).clamp(0, 255);
+                format!(
+                    "Stat: {} Accuracy -> {}",
+                    actor_label(actor),
+                    actor.combat_stats.accuracy
+                )
+            }
             Some(stat) => format!("Stat: {} {stat} {}", actor_label(actor), amount),
             None => format!("Stat: {}", actor_label(actor)),
         }
@@ -1001,6 +1064,9 @@ fn default_character_actor(character: Character) -> BattleActor {
             defense: stats.defense,
             magic: stats.magic,
             magic_defense: stats.magic_defense,
+            luck: stats.luck,
+            evasion: stats.evasion,
+            accuracy: stats.accuracy,
             base_weapon_damage: stats.base_weapon_damage,
         });
     }
@@ -1061,6 +1127,9 @@ fn monster_template(name: &str) -> MonsterTemplate {
                 defense: stats.defense,
                 magic: stats.magic,
                 magic_defense: stats.magic_defense,
+                luck: stats.luck,
+                evasion: stats.evasion,
+                accuracy: stats.accuracy,
                 base_weapon_damage: stats.base_weapon_damage,
             },
             elemental_affinities: stats.elemental_affinities,
@@ -1644,6 +1713,27 @@ mod tests {
             .contains("Equipment: weapon Tidus [4 strength_+5%]"));
         assert!(output.text.contains("Advanced rng4 1 times"));
         assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn stat_command_updates_combat_stats_used_by_damage() {
+        let mut state = SimulationState::new(1);
+        let tidus_strength = state
+            .character_actor(Character::Tidus)
+            .unwrap()
+            .combat_stats
+            .strength;
+
+        state.change_stat(&[
+            "tidus".to_string(),
+            "strength".to_string(),
+            "+10".to_string(),
+        ]);
+        state.change_stat(&["tidus".to_string(), "luck".to_string(), "1".to_string()]);
+
+        let tidus = state.character_actor(Character::Tidus).unwrap();
+        assert_eq!(tidus.combat_stats.strength, tidus_strength + 10);
+        assert_eq!(tidus.combat_stats.luck, 1);
     }
 
     #[test]

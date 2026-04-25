@@ -43,6 +43,9 @@ pub struct MonsterStats {
     pub defense: i32,
     pub magic: i32,
     pub magic_defense: i32,
+    pub luck: i32,
+    pub evasion: i32,
+    pub accuracy: i32,
     pub base_weapon_damage: i32,
     pub elemental_affinities: HashMap<Element, ElementalAffinity>,
     pub status_resistances: HashMap<Status, u8>,
@@ -59,6 +62,9 @@ pub struct CharacterStats {
     pub defense: i32,
     pub magic: i32,
     pub magic_defense: i32,
+    pub luck: i32,
+    pub evasion: i32,
+    pub accuracy: i32,
     pub base_weapon_damage: i32,
 }
 
@@ -391,6 +397,9 @@ fn parse_characters() -> HashMap<Character, CharacterStats> {
                         .get("Magic defense")
                         .copied()
                         .unwrap_or_default(),
+                    luck: entry.stats.get("Luck").copied().unwrap_or_default(),
+                    evasion: entry.stats.get("Evasion").copied().unwrap_or_default(),
+                    accuracy: entry.stats.get("Accuracy").copied().unwrap_or_default(),
                     base_weapon_damage,
                 },
             ))
@@ -789,6 +798,9 @@ fn parse_monsters() -> HashMap<String, MonsterStats> {
                 defense: data[33] as i32,
                 magic: data[34] as i32,
                 magic_defense: data[35] as i32,
+                luck: data[37] as i32,
+                evasion: data[38] as i32,
+                accuracy: data[39] as i32,
                 base_weapon_damage: data[176] as i32,
                 elemental_affinities: parse_monster_elemental_affinities(&data),
                 status_resistances: parse_monster_status_resistances(&data),
@@ -1132,6 +1144,8 @@ mod tests {
         assert_eq!(tidus.max_hp, 520);
         assert_eq!(tidus.agility, 10);
         assert_eq!(tidus.strength, 15);
+        assert_eq!(tidus.accuracy, 10);
+        assert_eq!(tidus.luck, 18);
         assert_eq!(tidus.base_weapon_damage, 16);
     }
 
