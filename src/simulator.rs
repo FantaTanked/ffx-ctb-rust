@@ -666,7 +666,7 @@ impl SimulationState {
     ) -> Vec<ActorId> {
         let explicit_targets = args
             .iter()
-            .filter_map(|arg| self.resolve_actor_id(arg))
+            .flat_map(|arg| self.resolve_action_target_arg(arg))
             .collect::<Vec<_>>();
         if !explicit_targets.is_empty() {
             return explicit_targets;
@@ -913,6 +913,18 @@ impl SimulationState {
             return Some(ActorId::Character(character));
         }
         value.parse::<MonsterSlot>().ok().map(ActorId::Monster)
+    }
+
+    fn resolve_action_target_arg(&self, value: &str) -> Vec<ActorId> {
+        match value.to_ascii_lowercase().as_str() {
+            "party" | "characters" | "chars" => {
+                self.party.iter().copied().map(ActorId::Character).collect()
+            }
+            "monsters" | "monster" | "enemies" | "enemy" => {
+                self.monsters.iter().map(|actor| actor.id).collect()
+            }
+            _ => self.resolve_actor_id(value).into_iter().collect(),
+        }
     }
 
     fn resolve_actor_id(&self, value: &str) -> Option<ActorId> {
@@ -1868,6 +1880,51 @@ mod tests {
             vec![
                 ActorId::Character(Character::Tidus),
                 ActorId::Character(Character::Wakka),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolves_party_and_monsters_action_target_aliases() {
+        let mut state = SimulationState::new(1);
+        state.party = vec![Character::Tidus, Character::Wakka];
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(2),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Rikku), "grenade");
+
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Character(Character::Rikku),
+                action_data.as_ref().unwrap(),
+                &[String::from("monsters")]
+            ),
+            vec![
+                ActorId::Monster(MonsterSlot(1)),
+                ActorId::Monster(MonsterSlot(2))
+            ]
+        );
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Character(Character::Yuna),
+                action_data.as_ref().unwrap(),
+                &[String::from("party")]
+            ),
+            vec![
+                ActorId::Character(Character::Tidus),
+                ActorId::Character(Character::Wakka)
             ]
         );
     }
