@@ -802,6 +802,9 @@ impl SimulationState {
         let damage = calculate_action_damage(user, &target_actor, action);
         if action.damages_hp {
             self.apply_hp_damage(target, damage);
+            if action.drains {
+                self.apply_hp_damage(user.id, -damage);
+            }
         }
         if action.damages_ctb {
             if let Some(actor) = self.actor_mut(target) {
@@ -1238,6 +1241,14 @@ fn calculate_action_damage(user: &BattleActor, target: &BattleActor, action: &Ac
     };
     damage *= action.n_of_hits.max(1);
     damage = apply_damage_status_modifiers(damage, user, target, action);
+    if action.drains {
+        if user.statuses.contains(&Status::Zombie) {
+            damage = -damage;
+        }
+        if target.statuses.contains(&Status::Zombie) {
+            damage = -damage;
+        }
+    }
     if action.heals && !target.statuses.contains(&Status::Zombie) {
         -damage
     } else {
@@ -1947,6 +1958,32 @@ mod tests {
         let tidus = state.character_actor(Character::Tidus).unwrap();
         assert!(tidus.current_hp > 100);
         assert!(tidus.current_hp < tidus.max_hp);
+    }
+
+    #[test]
+    fn drain_actions_restore_user_hp_by_damage_dealt() {
+        let mut state = SimulationState::new(1);
+        let mut monster = BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        );
+        monster.current_hp = 100;
+        state.monsters.push(monster);
+        let tidus_hp = state.character_actor(Character::Tidus).unwrap().current_hp;
+        let action_data =
+            state.action_data_for_actor(ActorId::Monster(MonsterSlot(1)), "drain_touch");
+
+        state.apply_action_effects(
+            ActorId::Monster(MonsterSlot(1)),
+            action_data.as_ref(),
+            &[String::from("tidus")],
+        );
+
+        assert!(state.monsters[0].current_hp > 100);
+        assert!(state.character_actor(Character::Tidus).unwrap().current_hp < tidus_hp);
     }
 
     #[test]

@@ -98,6 +98,7 @@ pub struct ActionData {
     pub n_of_hits: i32,
     pub uses_weapon_properties: bool,
     pub ignores_armored: bool,
+    pub drains: bool,
     pub heals: bool,
     pub damages_hp: bool,
     pub damages_mp: bool,
@@ -440,6 +441,7 @@ fn parse_actions() -> HashMap<String, ActionData> {
                 n_of_hits: row.get(43).copied().unwrap_or(1).max(1) as i32,
                 uses_weapon_properties: row[30] & 0x04 != 0,
                 ignores_armored: row[30] & 0x01 != 0,
+                drains: row[29] & 0x01 != 0,
                 heals: row[32] & 0x10 != 0,
                 damages_hp: row.get(35).copied().unwrap_or_default() & 0x01 != 0,
                 damages_mp: row.get(35).copied().unwrap_or_default() & 0x02 != 0,
@@ -1163,6 +1165,9 @@ mod tests {
     fn loads_action_effects_from_upstream_data() {
         let dark_attack = action_data("dark_attack").unwrap();
         assert!(dark_attack.statuses.contains(&Status::Dark));
+
+        let drain_touch = action_data("drain_touch").unwrap();
+        assert!(drain_touch.drains);
 
         let attack = action_data("attack").unwrap();
         assert_eq!(attack.damage_formula, DamageFormula::Strength);
