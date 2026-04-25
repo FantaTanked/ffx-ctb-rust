@@ -384,6 +384,9 @@ impl SimulationState {
             if action_misses_target(action_data, self.actor(target)) {
                 continue;
             }
+            if self.consume_nul_statuses_if_blocked(user_actor.as_ref(), target, action_data) {
+                continue;
+            }
             if let Some(user_actor) = user_actor.as_ref() {
                 self.apply_action_damage(user_actor, target, action_data);
             }
@@ -750,6 +753,46 @@ impl SimulationState {
             return;
         }
         self.apply_status_to_actor(target, application.status);
+    }
+
+    fn consume_nul_statuses_if_blocked(
+        &mut self,
+        user: Option<&BattleActor>,
+        target: ActorId,
+        action: &ActionData,
+    ) -> bool {
+        let mut nul_statuses = action
+            .elements
+            .iter()
+            .filter_map(|element| nul_status_for_element(*element))
+            .collect::<Vec<_>>();
+        if action.uses_weapon_properties {
+            if let Some(user) = user {
+                for element in &user.weapon_elements {
+                    let Some(status) = nul_status_for_element(*element) else {
+                        continue;
+                    };
+                    if !nul_statuses.contains(&status) {
+                        nul_statuses.push(status);
+                    }
+                }
+            }
+        }
+        if nul_statuses.is_empty()
+            || !self.actor(target).is_some_and(|actor| {
+                nul_statuses
+                    .iter()
+                    .all(|status| actor.statuses.contains(status))
+            })
+        {
+            return false;
+        }
+        if let Some(actor) = self.actor_mut(target) {
+            for status in nul_statuses {
+                actor.statuses.remove(&status);
+            }
+        }
+        true
     }
 
     fn remove_status_from_actor(&mut self, target: ActorId, status: Status) {
@@ -1283,6 +1326,15 @@ fn action_misses_target(action: &ActionData, target: Option<&BattleActor>) -> bo
         && target.is_some_and(|target| {
             !target.statuses.contains(&Status::Death) && !target.statuses.contains(&Status::Zombie)
         })
+}
+
+fn nul_status_for_element(element: Element) -> Option<Status> {
+    match element {
+        Element::Fire => Some(Status::NulBlaze),
+        Element::Ice => Some(Status::NulFrost),
+        Element::Thunder => Some(Status::NulShock),
+        Element::Water => Some(Status::NulTide),
+    }
 }
 
 fn stat_based_action_damage(
@@ -2156,6 +2208,28 @@ mod tests {
         );
 
         assert!(weak_state.monsters[0].current_hp < neutral_hp);
+    }
+
+    #[test]
+    fn nul_statuses_block_matching_elemental_actions() {
+        let mut state = SimulationState::new(1);
+        let tidus = state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap();
+        tidus.statuses.insert(Status::NulShock);
+        let tidus_hp = tidus.current_hp;
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Lulu), "thunder");
+
+        state.apply_action_effects(
+            ActorId::Character(Character::Lulu),
+            action_data.as_ref(),
+            &[String::from("tidus")],
+        );
+
+        let tidus = state.character_actor(Character::Tidus).unwrap();
+        assert_eq!(tidus.current_hp, tidus_hp);
+        assert!(!tidus.statuses.contains(&Status::NulShock));
     }
 
     #[test]
