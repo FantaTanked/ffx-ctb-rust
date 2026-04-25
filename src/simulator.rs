@@ -691,6 +691,15 @@ impl SimulationState {
             return;
         }
         if status == Status::Death {
+            if actor.statuses.contains(&Status::Zombie) {
+                if !actor.immune_to_life {
+                    actor.current_hp = 0;
+                    actor.buffs.clear();
+                    actor.statuses.clear();
+                    actor.statuses.insert(Status::Death);
+                }
+                return;
+            }
             actor.current_hp = actor.max_hp.max(1);
             actor.ctb = actor.base_ctb() * 3;
         }
@@ -1036,6 +1045,7 @@ struct MonsterTemplate {
     immune_to_percentage_damage: bool,
     immune_to_physical_damage: bool,
     immune_to_magical_damage: bool,
+    immune_to_life: bool,
     auto_statuses: Vec<Status>,
 }
 
@@ -1060,6 +1070,7 @@ fn monster_template(name: &str) -> MonsterTemplate {
             immune_to_percentage_damage: stats.immune_to_percentage_damage,
             immune_to_physical_damage: stats.immune_to_physical_damage,
             immune_to_magical_damage: stats.immune_to_magical_damage,
+            immune_to_life: stats.immune_to_life,
             auto_statuses: stats.auto_statuses,
         })
         .unwrap_or_else(|| MonsterTemplate {
@@ -1075,6 +1086,7 @@ fn monster_template(name: &str) -> MonsterTemplate {
             immune_to_percentage_damage: false,
             immune_to_physical_damage: false,
             immune_to_magical_damage: false,
+            immune_to_life: false,
             auto_statuses: Vec::new(),
         })
 }
@@ -1085,6 +1097,7 @@ fn apply_damage_traits(actor: &mut BattleActor, template: &MonsterTemplate) {
     actor.immune_to_percentage_damage = template.immune_to_percentage_damage;
     actor.immune_to_physical_damage = template.immune_to_physical_damage;
     actor.immune_to_magical_damage = template.immune_to_magical_damage;
+    actor.immune_to_life = template.immune_to_life;
 }
 
 fn apply_template_auto_statuses(actor: &mut BattleActor, template: &MonsterTemplate) {
@@ -1984,5 +1997,44 @@ mod tests {
         );
 
         assert_eq!(state.monsters[0].current_hp, 1_000);
+    }
+
+    #[test]
+    fn life_effects_damage_zombie_targets_unless_immune() {
+        let mut state = SimulationState::new(1);
+        let mut monster = BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        );
+        monster.statuses.insert(Status::Death);
+        monster.statuses.insert(Status::Zombie);
+        state.monsters.push(monster);
+
+        state.remove_status_from_actor(ActorId::Monster(MonsterSlot(1)), Status::Death);
+
+        assert_eq!(state.monsters[0].current_hp, 0);
+        assert!(state.monsters[0].statuses.contains(&Status::Death));
+
+        let mut immune_state = SimulationState::new(1);
+        let mut immune_monster = BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        );
+        immune_monster.immune_to_life = true;
+        immune_monster.statuses.insert(Status::Death);
+        immune_monster.statuses.insert(Status::Zombie);
+        immune_state.monsters.push(immune_monster);
+
+        immune_state.remove_status_from_actor(ActorId::Monster(MonsterSlot(1)), Status::Death);
+
+        assert_eq!(immune_state.monsters[0].current_hp, 1_000);
+        assert!(!immune_state.monsters[0].statuses.contains(&Status::Death));
+        assert!(immune_state.monsters[0].statuses.contains(&Status::Zombie));
     }
 }
