@@ -20,6 +20,8 @@ pub struct SimulationState {
     party: Vec<Character>,
     character_actors: Vec<BattleActor>,
     monsters: Vec<BattleActor>,
+    ctb_since_last_action: i32,
+    last_actor: Option<ActorId>,
     encounters_count: usize,
     unsupported_count: usize,
 }
@@ -31,6 +33,8 @@ impl SimulationState {
             party: vec![Character::Tidus, Character::Auron],
             character_actors: default_character_actors(),
             monsters: Vec::new(),
+            ctb_since_last_action: 0,
+            last_actor: None,
             encounters_count: 0,
             unsupported_count: 0,
         }
@@ -79,7 +83,7 @@ impl SimulationState {
                     .first()
                     .is_some_and(|arg| arg.eq_ignore_ascii_case("atb")) =>
             {
-                format!("ATB: {}", self.current_battle_state().ctb_order_string())
+                format!("ATB: {}", self.available_battle_state().ctb_order_string())
             }
             ParsedCommand::Status { args } => self.change_status(&args),
             ParsedCommand::Unknown { .. } => {
@@ -187,6 +191,8 @@ impl SimulationState {
     }
 
     fn process_start_of_encounter(&mut self) {
+        self.ctb_since_last_action = 0;
+        self.last_actor = None;
         for actor in &mut self.character_actors {
             actor.ctb = 0;
             actor.buffs.clear();
@@ -483,9 +489,15 @@ impl SimulationState {
         actor.set_status_resistances(template.status_resistances.clone());
         apply_damage_traits(&mut actor, &template);
         apply_template_auto_statuses(&mut actor, &template);
-        if let Some(ctb) = forced_ctb {
-            actor.ctb = ctb;
+        let ctb = forced_ctb.unwrap_or_else(|| actor.base_ctb() * 3);
+        actor.ctb = ctb - self.ctb_since_last_action;
+        if actor.ctb < 0 {
+            let negative_ctb = actor.ctb;
+            self.normalize_ctbs_by(negative_ctb);
+            self.ctb_since_last_action += negative_ctb;
+            actor.ctb = 0;
         }
+        let spawned_ctb = actor.ctb;
         if let Some(existing) = self
             .monsters
             .iter_mut()
@@ -496,7 +508,7 @@ impl SimulationState {
             self.monsters.push(actor);
             self.monsters.sort_by_key(|actor| actor.index);
         }
-        format!("Spawn: {monster_name} -> m{}", slot.0)
+        format!("Spawn: {monster_name} with {spawned_ctb} CTB")
     }
 
     fn change_element(&mut self, args: &[String]) -> String {
@@ -763,7 +775,7 @@ impl SimulationState {
                 .map(|actor| actor.id)
                 .into_iter()
                 .collect(),
-            ActionTarget::Counter => self.current_battle_state().last_actor.into_iter().collect(),
+            ActionTarget::Counter => self.last_actor.into_iter().collect(),
             ActionTarget::Character(character) => vec![ActorId::Character(character)],
             ActionTarget::Monster(slot) => vec![ActorId::Monster(slot)],
             ActionTarget::Single | ActionTarget::EitherParty | ActionTarget::None => Vec::new(),
@@ -1021,6 +1033,7 @@ impl SimulationState {
     }
 
     fn process_end_of_turn(&mut self, actor_id: ActorId) {
+        self.last_actor = Some(actor_id);
         let poison_damage = self.actor(actor_id).and_then(|actor| {
             actor
                 .statuses
@@ -1031,6 +1044,7 @@ impl SimulationState {
             self.apply_hp_damage(actor_id, damage);
         }
         let elapsed_ctb = self.normalize_after_turn();
+        self.ctb_since_last_action = elapsed_ctb;
         self.apply_regen(elapsed_ctb);
     }
 
@@ -1068,6 +1082,23 @@ impl SimulationState {
             }
         }
         min_ctb
+    }
+
+    fn normalize_ctbs_by(&mut self, ctb: i32) {
+        if ctb == 0 {
+            return;
+        }
+        let party = self.party.clone();
+        for actor in &mut self.character_actors {
+            if party.contains(&character_id(actor)) && !actor.statuses.contains(&Status::Petrify) {
+                actor.ctb -= ctb;
+            }
+        }
+        for actor in &mut self.monsters {
+            if !actor.statuses.contains(&Status::Petrify) {
+                actor.ctb -= ctb;
+            }
+        }
     }
 
     fn apply_regen(&mut self, elapsed_ctb: i32) {
@@ -1158,6 +1189,20 @@ impl SimulationState {
 
     fn current_battle_state(&self) -> BattleState {
         BattleState::new(self.current_party_actors(), self.monsters.clone())
+    }
+
+    fn available_battle_state(&self) -> BattleState {
+        BattleState::new(
+            self.current_party_actors()
+                .into_iter()
+                .filter(|actor| actor.can_take_turn())
+                .collect(),
+            self.monsters
+                .iter()
+                .filter(|actor| actor.can_take_turn())
+                .cloned()
+                .collect(),
+        )
     }
 
     fn current_party_actors(&self) -> Vec<BattleActor> {
@@ -1959,7 +2004,7 @@ mod tests {
         let output = simulate(1, &lines);
         assert!(output.text.contains("Stat: tanker (M1) CTB ->"));
         assert!(output.text.contains("Status: tanker (M1)"));
-        assert!(output.text.contains("Spawn: sinscale_3 -> m4"));
+        assert!(output.text.contains("Spawn: sinscale_3 with 0 CTB"));
         assert!(output.text.contains("Tidus -> Attack ["));
         assert!(output.text.contains("Party: Tidus, Auron -> Valefor"));
         assert!(output.text.contains("Element: m1 thunder weak"));
@@ -1968,6 +2013,44 @@ mod tests {
             .contains("Equipment: weapon Tidus [4 strength_+5%]"));
         assert!(output.text.contains("Advanced rng4 1 times"));
         assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn status_atb_lists_only_actors_who_can_take_turn() {
+        let output = simulate(
+            1,
+            &[
+                "status tidus sleep".to_string(),
+                "status atb".to_string(),
+                "status tidus sleep 0".to_string(),
+                "status atb".to_string(),
+            ],
+        );
+
+        let lines = output.text.lines().collect::<Vec<_>>();
+        assert_eq!(lines[1], "ATB: Au[0]");
+        assert_eq!(lines[3], "ATB: Ti[0] Au[0]");
+    }
+
+    #[test]
+    fn spawned_monsters_account_for_elapsed_ctb() {
+        let mut state = SimulationState::new(1);
+        state.ctb_since_last_action = 7;
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .ctb = 2;
+        state
+            .actor_mut(ActorId::Character(Character::Auron))
+            .unwrap()
+            .ctb = 5;
+
+        state.spawn_monster("worker", MonsterSlot(1), Some(3));
+
+        assert_eq!(state.monsters[0].ctb, 0);
+        assert_eq!(state.character_actor(Character::Tidus).unwrap().ctb, 6);
+        assert_eq!(state.character_actor(Character::Auron).unwrap().ctb, 9);
+        assert_eq!(state.ctb_since_last_action, 3);
     }
 
     #[test]
