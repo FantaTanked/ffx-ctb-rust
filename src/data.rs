@@ -77,6 +77,10 @@ pub enum ActionTarget {
     SingleMonster,
     RandomCharacter,
     RandomMonster,
+    RandomCharacterWith(Status),
+    RandomCharacterWithout(Status),
+    RandomCharacterWithoutEither(Status, Status),
+    RandomMonsterWithout(Status),
     CounterSelf,
     CounterCharactersParty,
     Counter,
@@ -728,25 +732,59 @@ fn parse_named_action_target(value: &str) -> Option<ActionTarget> {
         | "Highest Str Character"
         | "Highest MP Character"
         | "Lowest Mag Def Character"
-        | "Random Character Affected By Reflect"
-        | "Random Character Affected By Zombie"
-        | "Random Character Affected By Petrify"
-        | "Random Character Not Affected By Petrify"
-        | "Random Character Not Affected By Doom"
-        | "Random Character Not Affected By Berserk"
-        | "Random Character Not Affected By Confuse"
-        | "Random Character Not Affected By Curse"
-        | "Random Character Not Affected By Poison"
-        | "Random Character Not Affected By Auto-Life"
-        | "Random Character Affected By Death"
-        | "Random Character Not Affected By Shell or Reflect"
-        | "Random Character Not Affected By Protect or Reflect"
-        | "Random Character Not Affected By Haste or Reflect"
         | "Random Character (Not User) Damaged" => Some(ActionTarget::RandomCharacter),
-        "Random Monster"
-        | "Random Monster Not Affected By Shell"
-        | "Random Monster Not Affected By Protect"
-        | "Random Monster Not Affected By Reflect" => Some(ActionTarget::RandomMonster),
+        "Random Character Affected By Reflect" => {
+            Some(ActionTarget::RandomCharacterWith(Status::Reflect))
+        }
+        "Random Character Affected By Zombie" => {
+            Some(ActionTarget::RandomCharacterWith(Status::Zombie))
+        }
+        "Random Character Affected By Petrify" => {
+            Some(ActionTarget::RandomCharacterWith(Status::Petrify))
+        }
+        "Random Character Affected By Death" => {
+            Some(ActionTarget::RandomCharacterWith(Status::Death))
+        }
+        "Random Character Not Affected By Petrify" => {
+            Some(ActionTarget::RandomCharacterWithout(Status::Petrify))
+        }
+        "Random Character Not Affected By Doom" => {
+            Some(ActionTarget::RandomCharacterWithout(Status::Doom))
+        }
+        "Random Character Not Affected By Berserk" => {
+            Some(ActionTarget::RandomCharacterWithout(Status::Berserk))
+        }
+        "Random Character Not Affected By Confuse" => {
+            Some(ActionTarget::RandomCharacterWithout(Status::Confuse))
+        }
+        "Random Character Not Affected By Curse" => {
+            Some(ActionTarget::RandomCharacterWithout(Status::Curse))
+        }
+        "Random Character Not Affected By Poison" => {
+            Some(ActionTarget::RandomCharacterWithout(Status::Poison))
+        }
+        "Random Character Not Affected By Auto-Life" => {
+            Some(ActionTarget::RandomCharacterWithout(Status::AutoLife))
+        }
+        "Random Character Not Affected By Shell or Reflect" => Some(
+            ActionTarget::RandomCharacterWithoutEither(Status::Shell, Status::Reflect),
+        ),
+        "Random Character Not Affected By Protect or Reflect" => Some(
+            ActionTarget::RandomCharacterWithoutEither(Status::Protect, Status::Reflect),
+        ),
+        "Random Character Not Affected By Haste or Reflect" => Some(
+            ActionTarget::RandomCharacterWithoutEither(Status::Haste, Status::Reflect),
+        ),
+        "Random Monster" => Some(ActionTarget::RandomMonster),
+        "Random Monster Not Affected By Shell" => {
+            Some(ActionTarget::RandomMonsterWithout(Status::Shell))
+        }
+        "Random Monster Not Affected By Protect" => {
+            Some(ActionTarget::RandomMonsterWithout(Status::Protect))
+        }
+        "Random Monster Not Affected By Reflect" => {
+            Some(ActionTarget::RandomMonsterWithout(Status::Reflect))
+        }
         "Counter" | "Counter Random Character" | "Counter Last Target" => {
             Some(ActionTarget::Counter)
         }

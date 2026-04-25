@@ -710,6 +710,47 @@ impl SimulationState {
                 .map(|actor| actor.id)
                 .into_iter()
                 .collect(),
+            ActionTarget::RandomCharacterWith(status) => self
+                .party
+                .iter()
+                .copied()
+                .map(ActorId::Character)
+                .find(|actor_id| {
+                    self.actor(*actor_id)
+                        .is_some_and(|actor| actor.statuses.contains(&status))
+                })
+                .into_iter()
+                .collect(),
+            ActionTarget::RandomCharacterWithout(status) => self
+                .party
+                .iter()
+                .copied()
+                .map(ActorId::Character)
+                .find(|actor_id| {
+                    self.actor(*actor_id)
+                        .is_some_and(|actor| !actor.statuses.contains(&status))
+                })
+                .into_iter()
+                .collect(),
+            ActionTarget::RandomCharacterWithoutEither(left, right) => self
+                .party
+                .iter()
+                .copied()
+                .map(ActorId::Character)
+                .find(|actor_id| {
+                    self.actor(*actor_id).is_some_and(|actor| {
+                        !actor.statuses.contains(&left) && !actor.statuses.contains(&right)
+                    })
+                })
+                .into_iter()
+                .collect(),
+            ActionTarget::RandomMonsterWithout(status) => self
+                .monsters
+                .iter()
+                .find(|actor| !actor.statuses.contains(&status))
+                .map(|actor| actor.id)
+                .into_iter()
+                .collect(),
             ActionTarget::Counter => self.current_battle_state().last_actor.into_iter().collect(),
             ActionTarget::Character(character) => vec![ActorId::Character(character)],
             ActionTarget::Monster(slot) => vec![ActorId::Monster(slot)],
@@ -1783,7 +1824,36 @@ fn display_action_name(action: &str) -> String {
 mod tests {
     use super::{monster_template, simulate, SimulationState};
     use crate::battle::{ActorId, BattleActor};
+    use crate::data::{ActionData, ActionTarget, DamageFormula, DamageType};
     use crate::model::{Buff, Character, Element, ElementalAffinity, MonsterSlot, Status};
+
+    fn test_action(target: ActionTarget) -> ActionData {
+        ActionData {
+            key: "test".to_string(),
+            rank: 3,
+            target,
+            damage_formula: DamageFormula::NoDamage,
+            damage_type: DamageType::Other,
+            base_damage: 0,
+            n_of_hits: 1,
+            uses_weapon_properties: false,
+            ignores_armored: false,
+            drains: false,
+            misses_if_target_alive: false,
+            destroys_user: false,
+            heals: false,
+            damages_hp: false,
+            damages_mp: false,
+            damages_ctb: false,
+            elements: Vec::new(),
+            removes_statuses: false,
+            has_weak_delay: false,
+            has_strong_delay: false,
+            status_applications: Vec::new(),
+            statuses: Vec::new(),
+            buffs: Vec::new(),
+        }
+    }
 
     #[test]
     fn simulates_party_and_rng_commands_like_python() {
@@ -2003,6 +2073,73 @@ mod tests {
                 ActorId::Character(Character::Tidus),
                 ActorId::Character(Character::Wakka),
             ]
+        );
+    }
+
+    #[test]
+    fn filtered_random_targets_respect_status_predicates() {
+        let mut state = SimulationState::new(1);
+        state.party = vec![Character::Tidus, Character::Yuna, Character::Auron];
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .statuses
+            .insert(Status::Poison);
+        state
+            .actor_mut(ActorId::Character(Character::Yuna))
+            .unwrap()
+            .statuses
+            .insert(Status::Reflect);
+
+        let without_poison = test_action(ActionTarget::RandomCharacterWithout(Status::Poison));
+        let with_reflect = test_action(ActionTarget::RandomCharacterWith(Status::Reflect));
+        let without_reflect_or_shell = test_action(ActionTarget::RandomCharacterWithoutEither(
+            Status::Reflect,
+            Status::Shell,
+        ));
+
+        assert_eq!(
+            state.resolve_action_targets(ActorId::Monster(MonsterSlot(1)), &without_poison, &[]),
+            vec![ActorId::Character(Character::Yuna)]
+        );
+        assert_eq!(
+            state.resolve_action_targets(ActorId::Monster(MonsterSlot(1)), &with_reflect, &[]),
+            vec![ActorId::Character(Character::Yuna)]
+        );
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Monster(MonsterSlot(1)),
+                &without_reflect_or_shell,
+                &[]
+            ),
+            vec![ActorId::Character(Character::Tidus)]
+        );
+    }
+
+    #[test]
+    fn filtered_random_monster_targets_respect_status_predicates() {
+        let mut state = SimulationState::new(1);
+        let mut first = BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        );
+        first.statuses.insert(Status::Protect);
+        state.monsters.push(first);
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(2),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        let action = test_action(ActionTarget::RandomMonsterWithout(Status::Protect));
+
+        assert_eq!(
+            state.resolve_action_targets(ActorId::Character(Character::Tidus), &action, &[]),
+            vec![ActorId::Monster(MonsterSlot(2))]
         );
     }
 
