@@ -1,7 +1,7 @@
 use crate::battle::{ActorId, BattleActor, BattleState};
-use crate::data;
+use crate::data::{self, ActionData, ActionTarget};
 use crate::encounter::{character_initial_ctb, encounter_condition_from_roll, monster_initial_ctb};
-use crate::model::{Character, EncounterCondition, MonsterSlot, Status};
+use crate::model::{Buff, Character, EncounterCondition, MonsterSlot, Status};
 use crate::parser::{parse_raw_action_line, ParsedCommand};
 use crate::rng::FfxRngTracker;
 
@@ -181,6 +181,7 @@ impl SimulationState {
     fn process_start_of_encounter(&mut self) {
         for actor in &mut self.character_actors {
             actor.ctb = 0;
+            actor.buffs.clear();
             actor.statuses.clear();
         }
         self.monsters.clear();
@@ -200,6 +201,7 @@ impl SimulationState {
                 MonsterSlot(index + 1),
                 Some(template.key.clone()),
                 template.agility,
+                template.immune_to_delay,
                 template.max_hp,
             ));
         }
@@ -299,11 +301,16 @@ impl SimulationState {
         args: &[String],
     ) -> String {
         let actor_id = ActorId::Character(actor);
-        let Some(spent_ctb) = self.apply_actor_turn(actor_id, action_rank(action)) else {
+        let action_data = self.action_data_for_actor(actor_id, action);
+        let rank = action_data
+            .as_ref()
+            .map(|action| action.rank)
+            .unwrap_or_else(|| fallback_action_rank(action));
+        let Some(spent_ctb) = self.apply_actor_turn(actor_id, rank) else {
             self.unsupported_count += 1;
             return format!("Error: Unknown actor for action: {actor}");
         };
-        self.apply_action_status(action, args);
+        self.apply_action_effects(actor_id, action_data.as_ref(), args);
         format!(
             "{} -> {} [{spent_ctb}] | {}",
             actor.display_name(),
@@ -315,11 +322,16 @@ impl SimulationState {
     fn apply_monster_action(&mut self, slot: MonsterSlot, action: &str, args: &[String]) -> String {
         self.ensure_monster_slot(slot);
         let actor_id = ActorId::Monster(slot);
-        let Some(spent_ctb) = self.apply_actor_turn(actor_id, action_rank(action)) else {
+        let action_data = self.action_data_for_actor(actor_id, action);
+        let rank = action_data
+            .as_ref()
+            .map(|action| action.rank)
+            .unwrap_or_else(|| fallback_action_rank(action));
+        let Some(spent_ctb) = self.apply_actor_turn(actor_id, rank) else {
             self.unsupported_count += 1;
             return format!("Error: Unknown monster slot for action: m{}", slot.0);
         };
-        self.apply_action_status(action, args);
+        self.apply_action_effects(actor_id, action_data.as_ref(), args);
         format!(
             "M{} -> {} [{spent_ctb}] | {}",
             slot.0,
@@ -328,27 +340,52 @@ impl SimulationState {
         )
     }
 
-    fn apply_action_status(&mut self, action: &str, args: &[String]) {
-        let lowered = action.to_ascii_lowercase();
-        if !matches!(lowered.as_str(), "haste" | "slow") {
-            return;
+    fn action_data_for_actor(&self, user: ActorId, action: &str) -> Option<ActionData> {
+        if let ActorId::Monster(_) = user {
+            let monster_key = self
+                .actor(user)
+                .and_then(|actor| actor.monster_key.as_deref());
+            if let Some(action_data) =
+                monster_key.and_then(|key| data::monster_action_data(key, action))
+            {
+                return Some(action_data);
+            }
         }
-        let Some(target) = args.first().and_then(|arg| self.resolve_actor_id(arg)) else {
+        data::action_data(action)
+    }
+
+    fn apply_action_effects(
+        &mut self,
+        user: ActorId,
+        action_data: Option<&ActionData>,
+        args: &[String],
+    ) {
+        let Some(action_data) = action_data else {
             return;
         };
-        let Some(actor) = self.actor_mut(target) else {
-            return;
-        };
-        match lowered.as_str() {
-            "haste" => {
-                actor.statuses.remove(&Status::Slow);
-                actor.statuses.insert(Status::Haste);
+        let targets = self.resolve_action_targets(user, &action_data, args);
+        for target in targets {
+            if action_data.removes_statuses {
+                for status in &action_data.statuses {
+                    self.remove_status_from_actor(target, *status);
+                }
+            } else {
+                for status in &action_data.statuses {
+                    self.apply_status_to_actor(target, *status);
+                }
             }
-            "slow" => {
-                actor.statuses.remove(&Status::Haste);
-                actor.statuses.insert(Status::Slow);
+            if action_data.heals {
+                self.heal_actor(target);
             }
-            _ => {}
+            for buff in &action_data.buffs {
+                self.apply_buff_to_actor(target, buff.buff, buff.amount);
+            }
+            if action_data.has_weak_delay {
+                self.apply_delay(target, 3, 2);
+            }
+            if action_data.has_strong_delay {
+                self.apply_delay(target, 3, 1);
+            }
         }
     }
 
@@ -377,6 +414,7 @@ impl SimulationState {
             slot,
             Some(monster_name.to_string()),
             template.agility,
+            template.immune_to_delay,
             template.max_hp,
         );
         if let Some(ctb) = forced_ctb {
@@ -472,19 +510,135 @@ impl SimulationState {
     fn heal_party(&mut self, args: &[String]) -> String {
         if let Some(target) = args.first().and_then(|arg| self.resolve_actor_id(arg)) {
             if let Some(actor) = self.actor_mut(target) {
-                actor.current_hp = actor.max_hp;
-                actor.statuses.remove(&Status::Death);
-                actor.statuses.remove(&Status::Poison);
+                Self::restore_actor(actor);
                 return format!("Heal: {} HP restored", actor_label(actor));
             }
         } else {
             for actor in &mut self.character_actors {
-                actor.current_hp = actor.max_hp;
-                actor.statuses.remove(&Status::Death);
-                actor.statuses.remove(&Status::Poison);
+                Self::restore_actor(actor);
             }
         }
         "Heal: party HP restored".to_string()
+    }
+
+    fn resolve_action_targets(
+        &self,
+        user: ActorId,
+        action: &ActionData,
+        args: &[String],
+    ) -> Vec<ActorId> {
+        let explicit_targets = args
+            .iter()
+            .filter_map(|arg| self.resolve_actor_id(arg))
+            .collect::<Vec<_>>();
+        if !explicit_targets.is_empty() {
+            return explicit_targets;
+        }
+
+        match action.target {
+            ActionTarget::SelfTarget | ActionTarget::CounterSelf => vec![user],
+            ActionTarget::CharactersParty | ActionTarget::CounterCharactersParty => match user {
+                ActorId::Character(_) => {
+                    self.party.iter().copied().map(ActorId::Character).collect()
+                }
+                ActorId::Monster(_) => self.party.iter().copied().map(ActorId::Character).collect(),
+            },
+            ActionTarget::MonstersParty => match user {
+                ActorId::Character(_) => self.monsters.iter().map(|actor| actor.id).collect(),
+                ActorId::Monster(_) => self.monsters.iter().map(|actor| actor.id).collect(),
+            },
+            ActionTarget::SingleCharacter | ActionTarget::RandomCharacter => self
+                .party
+                .first()
+                .copied()
+                .map(ActorId::Character)
+                .into_iter()
+                .collect(),
+            ActionTarget::SingleMonster | ActionTarget::RandomMonster => self
+                .monsters
+                .first()
+                .map(|actor| actor.id)
+                .into_iter()
+                .collect(),
+            ActionTarget::Counter => self.current_battle_state().last_actor.into_iter().collect(),
+            ActionTarget::Character(character) => vec![ActorId::Character(character)],
+            ActionTarget::Monster(slot) => vec![ActorId::Monster(slot)],
+            ActionTarget::Single | ActionTarget::EitherParty | ActionTarget::None => Vec::new(),
+        }
+    }
+
+    fn apply_status_to_actor(&mut self, target: ActorId, status: Status) {
+        let Some(actor) = self.actor_mut(target) else {
+            return;
+        };
+        match status {
+            Status::Haste => {
+                actor.statuses.remove(&Status::Slow);
+                actor.statuses.insert(Status::Haste);
+            }
+            Status::Slow => {
+                actor.statuses.remove(&Status::Haste);
+                actor.statuses.insert(Status::Slow);
+            }
+            Status::Petrify => {
+                actor.buffs.clear();
+                actor.statuses.clear();
+                actor.statuses.insert(Status::Petrify);
+            }
+            Status::Death => {
+                actor.current_hp = 0;
+                actor.buffs.clear();
+                actor.statuses.clear();
+                actor.statuses.insert(Status::Death);
+            }
+            other => {
+                actor.statuses.insert(other);
+            }
+        }
+    }
+
+    fn remove_status_from_actor(&mut self, target: ActorId, status: Status) {
+        let Some(actor) = self.actor_mut(target) else {
+            return;
+        };
+        if !actor.statuses.remove(&status) {
+            return;
+        }
+        if status == Status::Death {
+            actor.current_hp = actor.max_hp.max(1);
+            actor.ctb = actor.base_ctb() * 3;
+        }
+    }
+
+    fn apply_buff_to_actor(&mut self, target: ActorId, buff: Buff, amount: i32) {
+        let Some(actor) = self.actor_mut(target) else {
+            return;
+        };
+        actor.add_buff(buff, amount);
+    }
+
+    fn heal_actor(&mut self, target: ActorId) {
+        let Some(actor) = self.actor_mut(target) else {
+            return;
+        };
+        Self::restore_actor(actor);
+    }
+
+    fn restore_actor(actor: &mut BattleActor) {
+        actor.current_hp = actor.max_hp;
+        actor.statuses.remove(&Status::Death);
+        actor.statuses.remove(&Status::Poison);
+        actor.statuses.remove(&Status::Zombie);
+    }
+
+    fn apply_delay(&mut self, target: ActorId, numerator: i32, divisor: i32) {
+        let Some(actor) = self.actor_mut(target) else {
+            return;
+        };
+        if actor.immune_to_delay {
+            return;
+        }
+        actor.ctb += actor.base_ctb() * numerator / divisor;
     }
 
     fn end_encounter(&mut self) -> String {
@@ -502,8 +656,9 @@ impl SimulationState {
         }
         while self.monsters.len() < slot.0 {
             let next_slot = MonsterSlot(self.monsters.len() + 1);
-            self.monsters
-                .push(BattleActor::monster_with_key(next_slot, None, 10, 1_000));
+            self.monsters.push(BattleActor::monster_with_key(
+                next_slot, None, 10, false, 1_000,
+            ));
         }
     }
 
@@ -574,6 +729,13 @@ impl SimulationState {
             .find(|actor| actor.id == actor_id)
     }
 
+    fn actor(&self, actor_id: ActorId) -> Option<&BattleActor> {
+        self.character_actors
+            .iter()
+            .chain(self.monsters.iter())
+            .find(|actor| actor.id == actor_id)
+    }
+
     fn normalize_ctbs(&mut self) {
         let min_ctb = self
             .current_party_actors()
@@ -641,38 +803,85 @@ fn format_condition(condition: EncounterCondition) -> &'static str {
 }
 
 fn default_character_actors() -> Vec<BattleActor> {
+    all_characters()
+        .into_iter()
+        .map(default_character_actor)
+        .collect()
+}
+
+fn all_characters() -> [Character; 19] {
     [
-        (Character::Tidus, 0, 10, 520),
-        (Character::Yuna, 1, 10, 475),
-        (Character::Auron, 2, 5, 1030),
-        (Character::Kimahri, 3, 6, 644),
-        (Character::Wakka, 4, 7, 618),
-        (Character::Lulu, 5, 5, 380),
-        (Character::Rikku, 6, 16, 360),
-        (Character::Seymour, 7, 20, 1200),
-        (Character::Valefor, 8, 0, 99999),
-        (Character::Ifrit, 9, 0, 99999),
-        (Character::Ixion, 10, 0, 99999),
-        (Character::Shiva, 11, 0, 99999),
-        (Character::Bahamut, 12, 0, 99999),
-        (Character::Anima, 13, 0, 99999),
-        (Character::Yojimbo, 14, 0, 99999),
-        (Character::Cindy, 15, 0, 99999),
-        (Character::Sandy, 16, 0, 99999),
-        (Character::Mindy, 17, 0, 99999),
-        (Character::Unknown, 18, 0, 99999),
+        Character::Tidus,
+        Character::Yuna,
+        Character::Auron,
+        Character::Kimahri,
+        Character::Wakka,
+        Character::Lulu,
+        Character::Rikku,
+        Character::Seymour,
+        Character::Valefor,
+        Character::Ifrit,
+        Character::Ixion,
+        Character::Shiva,
+        Character::Bahamut,
+        Character::Anima,
+        Character::Yojimbo,
+        Character::Cindy,
+        Character::Sandy,
+        Character::Mindy,
+        Character::Unknown,
     ]
-    .into_iter()
-    .map(|(character, index, agility, max_hp)| {
-        BattleActor::character(character, index, agility, max_hp)
-    })
-    .collect()
+}
+
+fn default_character_actor(character: Character) -> BattleActor {
+    let fallback = fallback_character_defaults(character);
+    let stats = data::character_stats(character);
+    let index = stats
+        .as_ref()
+        .map(|stats| stats.index)
+        .unwrap_or(fallback.0);
+    let agility = stats
+        .as_ref()
+        .map(|stats| stats.agility)
+        .filter(|agility| *agility > 0 || character == Character::Unknown)
+        .unwrap_or(fallback.1);
+    let max_hp = stats
+        .as_ref()
+        .map(|stats| stats.max_hp)
+        .filter(|max_hp| *max_hp > 0)
+        .unwrap_or(fallback.2);
+    BattleActor::character(character, index, agility, max_hp)
+}
+
+fn fallback_character_defaults(character: Character) -> (usize, u8, i32) {
+    match character {
+        Character::Tidus => (0, 10, 520),
+        Character::Yuna => (1, 10, 475),
+        Character::Auron => (2, 5, 1030),
+        Character::Kimahri => (3, 6, 644),
+        Character::Wakka => (4, 7, 618),
+        Character::Lulu => (5, 5, 380),
+        Character::Rikku => (6, 16, 360),
+        Character::Seymour => (7, 20, 1200),
+        Character::Valefor => (8, 0, 99_999),
+        Character::Ifrit => (9, 0, 99_999),
+        Character::Ixion => (10, 0, 99_999),
+        Character::Shiva => (11, 0, 99_999),
+        Character::Bahamut => (12, 0, 99_999),
+        Character::Anima => (13, 0, 99_999),
+        Character::Yojimbo => (14, 0, 99_999),
+        Character::Cindy => (15, 0, 99_999),
+        Character::Sandy => (16, 0, 99_999),
+        Character::Mindy => (17, 0, 99_999),
+        Character::Unknown => (18, 0, 99_999),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MonsterTemplate {
     key: String,
     agility: u8,
+    immune_to_delay: bool,
     max_hp: i32,
 }
 
@@ -681,16 +890,18 @@ fn monster_template(name: &str) -> MonsterTemplate {
         .map(|stats| MonsterTemplate {
             key: stats.key,
             agility: stats.agility,
+            immune_to_delay: stats.immune_to_delay,
             max_hp: stats.max_hp,
         })
         .unwrap_or_else(|| MonsterTemplate {
             key: name.to_string(),
             agility: 10,
+            immune_to_delay: false,
             max_hp: 1_000,
         })
 }
 
-fn action_rank(action: &str) -> i32 {
+fn fallback_action_rank(action: &str) -> i32 {
     data::action_rank(action).unwrap_or_else(|| match action.to_ascii_lowercase().as_str() {
         "quick_hit_ps2" => 1,
         "defend" | "quick_hit_hd" | "use" => 2,
@@ -715,18 +926,7 @@ fn parse_summon_name(name: &str) -> Option<Character> {
 }
 
 fn parse_status(name: &str) -> Option<Status> {
-    match name.to_ascii_lowercase().as_str() {
-        "death" => Some(Status::Death),
-        "eject" => Some(Status::Eject),
-        "petrify" => Some(Status::Petrify),
-        "sleep" => Some(Status::Sleep),
-        "haste" => Some(Status::Haste),
-        "slow" => Some(Status::Slow),
-        "regen" => Some(Status::Regen),
-        "poison" => Some(Status::Poison),
-        "doom" => Some(Status::Doom),
-        _ => None,
-    }
+    name.parse().ok()
 }
 
 fn parse_signed_amount(amount: &str, current: i32) -> i32 {
@@ -777,7 +977,9 @@ fn display_action_name(action: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::simulate;
+    use super::{monster_template, simulate, SimulationState};
+    use crate::battle::{ActorId, BattleActor};
+    use crate::model::{Buff, Character, MonsterSlot, Status};
 
     #[test]
     fn simulates_party_and_rng_commands_like_python() {
@@ -856,9 +1058,7 @@ mod tests {
 
     #[test]
     fn renders_full_default_script_without_parser_gaps() {
-        let input = include_str!(
-            "../../ctb-live-editor-pages/search_outputs/3096296922/ctb_actions_input.txt"
-        );
+        let input = include_str!("../fixtures/ctb_actions_input.txt");
         let prepared = crate::script::prepare_action_lines(input);
         let output = simulate(3096296922, &prepared.lines);
         let errors = output
@@ -869,5 +1069,91 @@ mod tests {
             .join("\n");
         assert_eq!(output.unsupported_count, 0, "{errors}");
         assert!(output.text.contains("Encounter:"));
+    }
+
+    #[test]
+    fn applies_status_effects_from_action_data() {
+        let mut state = SimulationState::new(1);
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("tanker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Wakka), "dark_attack");
+        state.apply_action_effects(
+            ActorId::Character(Character::Wakka),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+
+        assert!(state.monsters[0].statuses.contains(&Status::Dark));
+    }
+
+    #[test]
+    fn applies_and_clamps_buffs_from_action_data() {
+        let mut state = SimulationState::new(1);
+
+        for _ in 0..8 {
+            let action_data =
+                state.action_data_for_actor(ActorId::Character(Character::Tidus), "cheer");
+            state.apply_action_effects(
+                ActorId::Character(Character::Tidus),
+                action_data.as_ref(),
+                &[String::from("tidus")],
+            );
+        }
+
+        let tidus = state.character_actor(Character::Tidus).unwrap();
+        assert_eq!(tidus.buffs.get(&Buff::Cheer), Some(&5));
+    }
+
+    #[test]
+    fn respects_delay_immunity_from_monster_data() {
+        let mut state = SimulationState::new(1);
+        let template = monster_template("geosgaeno");
+        let mut monster = BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some(template.key),
+            template.agility,
+            template.immune_to_delay,
+            template.max_hp,
+        );
+        monster.ctb = 12;
+        state.monsters.push(monster);
+
+        state.apply_delay(ActorId::Monster(MonsterSlot(1)), 3, 2);
+
+        assert_eq!(state.monsters[0].ctb, 12);
+    }
+
+    #[test]
+    fn uses_monster_action_target_overrides() {
+        let mut state = SimulationState::new(1);
+        state.party = vec![Character::Tidus, Character::Wakka];
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("sinspawn_echuilles".to_string()),
+            20,
+            false,
+            2_000,
+        ));
+
+        let action_data = state
+            .action_data_for_actor(ActorId::Monster(MonsterSlot(1)), "blender")
+            .unwrap();
+        let targets =
+            state.resolve_action_targets(ActorId::Monster(MonsterSlot(1)), &action_data, &[]);
+
+        assert_eq!(
+            targets,
+            vec![
+                ActorId::Character(Character::Tidus),
+                ActorId::Character(Character::Wakka),
+            ]
+        );
     }
 }

@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::model::{Character, MonsterSlot, Status};
+use crate::model::{Buff, Character, MonsterSlot, Status};
 
 const ICV_BASE: [u16; 256] = [
     28, 28, 26, 24, 20, 16, 16, 15, 15, 15, 14, 14, 13, 13, 13, 12, 12, 11, 11, 10, 10, 10, 10, 9,
@@ -26,25 +26,35 @@ pub struct BattleActor {
     pub monster_key: Option<String>,
     pub index: usize,
     pub agility: u8,
+    pub immune_to_delay: bool,
     pub current_hp: i32,
     pub max_hp: i32,
     pub ctb: i32,
+    pub buffs: HashMap<Buff, i32>,
     pub statuses: HashSet<Status>,
 }
 
 impl BattleActor {
     pub fn character(character: Character, index: usize, agility: u8, max_hp: i32) -> Self {
-        Self::new(ActorId::Character(character), None, index, agility, max_hp)
+        Self::new(
+            ActorId::Character(character),
+            None,
+            index,
+            agility,
+            false,
+            max_hp,
+        )
     }
 
     pub fn monster(slot: MonsterSlot, agility: u8, max_hp: i32) -> Self {
-        Self::monster_with_key(slot, None, agility, max_hp)
+        Self::monster_with_key(slot, None, agility, false, max_hp)
     }
 
     pub fn monster_with_key(
         slot: MonsterSlot,
         monster_key: Option<String>,
         agility: u8,
+        immune_to_delay: bool,
         max_hp: i32,
     ) -> Self {
         Self::new(
@@ -52,6 +62,7 @@ impl BattleActor {
             monster_key,
             slot.0 - 1,
             agility,
+            immune_to_delay,
             max_hp,
         )
     }
@@ -61,6 +72,7 @@ impl BattleActor {
         monster_key: Option<String>,
         index: usize,
         agility: u8,
+        immune_to_delay: bool,
         max_hp: i32,
     ) -> Self {
         Self {
@@ -68,9 +80,11 @@ impl BattleActor {
             monster_key,
             index,
             agility,
+            immune_to_delay,
             current_hp: max_hp,
             max_hp,
             ctb: 0,
+            buffs: HashMap::new(),
             statuses: HashSet::new(),
         }
     }
@@ -98,6 +112,11 @@ impl BattleActor {
             ctb *= 2;
         }
         ctb
+    }
+
+    pub fn add_buff(&mut self, buff: Buff, amount: i32) {
+        let value = self.buffs.get(&buff).copied().unwrap_or_default() + amount;
+        self.buffs.insert(buff, value.clamp(0, 5));
     }
 }
 

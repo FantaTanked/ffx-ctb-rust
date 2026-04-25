@@ -1,0 +1,1462 @@
+/usage
+
+# -- Zanarkand --
+
+encounter sinscales
+
+tidus attack sinscale_6
+auron defend
+tidus attack sinscale_6
+auron defend
+auron defend
+tidus attack sinscale_6
+
+m1 spines
+
+auron defend
+tidus attack sinscale_6
+tidus attack sinscale_6
+tidus attack sinscale_6
+
+
+encounter ammes
+
+# Demi 1
+
+auron dragon_fang 3.0
+tidus attack m1
+
+# Demi 2
+
+tidus spiral_cut m1 2.5
+auron attack m1
+
+# Demi 3
+
+tidus attack m1
+auron attack m1
+
+# Demi 4
+
+tidus attack m1
+auron attack m1
+
+heal
+
+encounter tanker
+
+status atb
+tidus weapon
+auron attack auron
+
+m5 wings_flicker
+m7 does_nothing
+m6 does_nothing
+m2 does_nothing
+m3 does_nothing
+m4 does_nothing
+m8 does_nothing
+
+m5 spines
+m7 attack
+m6 attack
+m2 attack
+m3 attack
+m4 attack
+m8 attack
+
+
+
+# below for copy + paste
+# attack
+# spines
+# wings_flicker
+# does_nothing
+
+status atb
+tidus weapon
+
+tidus weapon
+
+status atb
+
+tidus attack tanker
+
+#tanker but just here to move ctb 
+m1 does_nothing
+
+status atb
+
+auron attack tanker
+tidus attack tanker
+
+heal
+
+# -- Underwater Ruins --
+heal
+encounter sahagins
+
+tidus attack sahagin_4
+tidus attack sahagin_4
+
+encounter geosgaeno
+
+tidus attack geosgaeno
+#tidus defend
+tidus attack geosgaeno
+#tidus defend
+
+heal
+
+encounter klikk_1
+
+stat m1 hp 750
+# tidus potion tidus
+
+tidus attack m1
+tidus attack m1
+tidus attack m1
+tidus attack m1
+tidus attack m1
+
+encounter klikk_2
+
+rikku grenade m1
+tidus defend
+rikku steal m1
+#status atb
+
+tidus attack m1
+rikku attack m1
+tidus attack m1
+#status atb
+
+rikku attack m1
+tidus attack m1
+rikku attack m1
+#status atb
+
+tidus attack m1
+rikku attack m1
+
+tidus attack m1
+rikku attack m1
+
+rikku attack m1
+#tidus attack m1
+
+
+encounter underwater_ruins
+
+rikku attack m1
+#rikku escape
+tidus attack m1
+#tidus escape
+#rikku attack m1
+
+heal
+
+encounter piranhas
+
+rikku grenade monsters
+
+#rikku attack m1
+#tidus attack m1
+#rikku attack m2
+#tidus attack m2
+
+encounter tros
+
+rikku steal tros
+#m1 attack
+m1 attack
+tidus attack m1
+rikku grenade m1
+
+status atb
+
+m1 flank
+tidus stand_by
+rikku grenade m1
+
+status atb
+m1 nautilus_charge
+
+rikku grenade m1
+
+tidus attack m1
+rikku grenade m1
+m1 flank
+rikku grenade m1
+
+party tw
+
+# -- Besaid --
+
+encounter besaid_lagoon
+
+#tidus attack piranha
+tidus attack m1
+wakka attack m2
+# tidus escape
+# wakka escape
+
+encounter besaid_lagoon
+
+#tidus attack piranha
+#wakka attack piranha
+ tidus escape
+ wakka escape
+
+# Tidus equips Brotherhood
+
+weapon tidus 4 strength_+5%
+
+encounter wakka_tutorial
+
+tidus attack dingo
+wakka attack condor
+
+encounter elements_tutorial
+
+# Tidus' crits are disabled
+tidus attacknocrit water_flan
+lulu thunder water_flan
+
+heal
+/macro besaid grid
+encounter kimahri
+
+# tidus potion tidus
+tidus attack m1
+tidus attack m1
+tidus attack m1
+m1 jump
+tidus attack m1
+tidus attack m1
+m1 jump
+tidus attack m1
+
+encounter garuda_1
+
+party ywl
+summon valefor
+
+valefor thunder garuda_3
+m1 sonic_boom
+valefor thunder garuda_3
+m1 sonic_boom
+valefor thunder garuda_3
+m1 attack
+valefor thunder garuda_3
+m1 attack
+valefor thunder garuda_3
+m1 sonic_boom
+valefor thunder garuda_3
+
+/macro besaid grid
+
+party tyl
+
+encounter garuda_2
+tidus escape
+yuna escape
+m1 sonic_boom
+lulu escape
+
+encounter besaid_forced_encounter
+
+tidus attack dingo_2
+party twl
+wakka attack condor_2
+lulu thunder water_flan_2
+
+# encounter besaid_road
+heal valefor
+heal
+
+# -- S.S. Liki --
+
+party tyk
+
+encounter sin_fin
+
+lulu thunder m4
+summon valefor
+valefor energy_ray m4
+
+m4 move
+m1 wings_flicker
+m4 move
+m1 spines
+m2 wings_flicker
+m4 move
+m2 spines
+m3 wings_flicker
+
+valefor thunder m4
+m4 move
+m3 spines
+valefor thunder m4
+m1 wings_flicker
+#m4 move
+valefor thunder m4
+
+status m4
+
+encounter echuilles
+
+tidus cheer
+wakka dark_attack m1
+m1 drain_touch
+tidus cheer
+status atb
+
+m3
+
+wakka attack m1
+
+
+m2
+m4
+m5
+
+# 2&3 on the right
+# 4&5 on the left
+
+tidus attack m1
+
+spawn sinscale_3 4
+spawn sinscale_3 5
+m1 drain_touch
+
+status atb
+
+wakka attack m1
+tidus attack m1
+
+m1 blender
+
+# Echuilles uses Blender
+
+status atb
+
+wakka attack m1
+tidus attack m1
+
+m4
+m5
+
+spawn sinscale_3 2
+spawn sinscale_3 3
+m1 drain_touch
+
+tidus spiral_cut m1 2.5 m1
+
+heal
+
+# -- Kilika --
+
+
+encounter lancet_tutorial
+
+party k
+status atb
+m1 seed_cannon_kimahri
+stat m1 ctb 100
+kimahri lancet m1
+#m1 seed_cannon
+
+party tkl
+
+status atb
+tidus attack m1
+party lwt
+wakka defend
+lulu fire m1
+# party lwt
+# wakka defend
+# m1 seed_cannon
+# tidus attack m1
+
+/macro kilika grid
+
+# Wakka equips Scout
+weapon wakka 2 icestrike sensor
+# If Wakka equips any Armguard
+# armor wakka 1
+
+# If Tidus equips an Icebrand
+ weapon tidus 1 icestrike
+
+# encounter lord_ochu
+
+party twl
+
+encounter kilika_woods
+
+tidus defend
+wakka attack killer_bee
+lulu water killer_bee
+m1 seed_cannon
+tidus flee
+
+encounter kilika_woods
+
+tidus defend
+wakka attack killer_bee
+lulu water killer_bee
+tidus flee
+
+party tyl
+encounter geneaux
+tidus defend
+summon valefor
+valefor energy_ray 
+stat m1 agility 10
+m1 venom
+m1 water
+m1 staccato
+valefor thunder sinspawn_geneaux
+m1 venom
+valefor thunder sinspawn_geneaux
+m1 water
+valefor thunder sinspawn_geneaux
+m1 staccato
+valefor energy_ray
+
+heal
+party twl
+encounter kilika_woods
+
+tidus attack dinonix
+wakka attack killer_bee
+
+encounter kilika_woods
+
+tidus attack killer_bee
+wakka attack killer_bee
+#lulu water killer_bee
+tidus flee
+
+
+encounter kilika_woods
+
+tidus attack dinonix
+wakka attack killer_bee
+lulu water yellow_element
+
+# encounter lord_ochu
+
+# -- Luca --
+
+heal
+
+party tkl
+encounter machina_1
+
+# Haste does CTB "damage"
+ tidus haste lulu
+#tidus defend
+lulu thunder worker
+lulu thunder worker
+
+encounter machina_2
+
+ tidus haste lulu
+lulu thunder worker
+lulu thunder worker
+
+weapon tidus 1 slowtouch
+
+encounter machina_3
+
+tidus haste lulu
+lulu thunder m1
+lulu thunder m2
+lulu thunder m2
+lulu thunder m1
+lulu thunder m1
+kimahri defend
+lulu thunder m2
+
+heal
+encounter oblitzerator
+
+ tidus haste lulu
+lulu thunder m2
+kimahri defend
+
+lulu thunder m2
+kimahri defend
+status atb
+roll rng4
+m2 does_nothing
+lulu thunder m2
+tidus use_crane
+m2 crane
+#kimahri attack oblitzerator
+lulu thunder oblitzerator
+ tidus attack oblitzerator
+
+/macro haste grid
+
+heal
+
+weapon wakka 1 lightningstrike
+
+encounter sahagin_chiefs
+
+tidus haste tidus
+wakka potion wakka
+tidus cheer
+wakka attack m1
+tidus haste wakka
+
+wakka attack m2
+tidus attack m3
+
+# 3 Sahagin Chiefs spawn
+wakka attack m2
+tidus attack m3
+
+# 2 Sahagin Chiefs spawn
+wakka attack m2
+tidus attack m1
+
+# 1 Sahagin Chief spawns
+wakka attack m1
+tidus attack m3
+
+# 3 Sahagin Chiefs spawn
+wakka attack m1
+tidus attack m2
+
+# 2 Sahagin Chiefs spawn, 4th appears
+wakka attack m4
+tidus attack m3
+
+# 2 Sahagin Chiefs spawn
+wakka attack m1
+tidus attack m2
+wakka attack m3
+tidus attack m4
+
+encounter vouivre
+
+auron attack vouivre_2
+
+encounter garuda
+
+tidus haste auron
+wakka potion tidus
+
+auron attack m1
+ m1 counter
+m1 sonic_boom
+auron attack m1
+# m1 counter
+#status atb
+m1 sonic_boom
+
+auron attack m1
+ m1 counter
+tidus attack m1
+ m1 counter
+#status atb
+
+auron attack m1
+ m1 counter
+wakka defend
+m1 sonic_boom
+
+auron attack m1
+# m1 counter
+auron attack m1
+status m1
+
+# -- Mi'ihen --
+encounter pierce_tutorial
+
+heal
+
+# Tidus' crits are disabled
+tidus attacknocrit raldo
+auron attack raldo
+
+encounter miihen_screen_1
+tidus flee
+encounter miihen_screen_1
+tidus flee
+encounter miihen_screen_1
+tidus flee
+encounter miihen_screen_1
+tidus flee
+
+encounter miihen_screen_2_3
+tidus flee
+heal
+encounter miihen_screen_2_3
+tidus flee
+#heal
+encounter miihen_screen_2_3
+tidus flee
+encounter miihen_screen_2_3
+tidus flee
+encounter miihen_screen_2_3
+tidus flee
+heal
+encounter miihen_screen_2_3
+tidus flee
+encounter miihen_screen_2_3
+tidus flee
+#encounter miihen_screen_2_3
+
+
+# encounter simulation_miihen
+tidus flee
+heal
+encounter chocobo_eater
+
+# m1 attack
+tidus haste m1
+
+wakka defend
+auron defend
+tidus defend
+# m1 attack
+# m1 fists_of_fury
+# m1 fists_of_fury
+# m1 thwack
+# m1 attack
+wakka defend
+auron defend
+tidus defend
+# m1 attack
+# m1 fists_of_fury
+# m1 fists_of_fury
+endencounter
+
+heal
+
+# -- Old Road --
+
+encounter old_road
+#heal
+tidus flee
+
+encounter old_road
+tidus flee
+
+encounter old_road
+tidus flee
+
+encounter old_road
+tidus flee
+
+
+# encounter simulation_old_road
+
+# -- Clasko Skip Screen --
+
+encounter clasko_skip_screen
+tidus flee
+
+encounter clasko_skip_screen
+tidus flee
+
+encounter clasko_skip_screen
+tidus flee
+
+encounter clasko_skip_screen
+tidus flee
+
+encounter clasko_skip_screen
+tidus flee
+
+encounter clasko_skip_screen
+tidus flee
+
+encounter clasko_skip_screen
+tidus flee
+
+
+# -- Djose --
+
+party taw
+encounter djose_highroad_front_half
+tidus flee
+encounter djose_highroad_front_half
+tidus flee
+encounter djose_highroad_back_half
+tidus flee
+#party kwa
+#kimahri lancet m1
+party kta
+#tidus flee
+
+encounter djose_highroad_back_half
+tidus flee
+
+encounter djose_highroad_back_half
+tidus flee
+
+heal
+
+#encounter simulation_djose
+#tidus flee
+
+# -- Moonflow --
+
+encounter moonflow_south
+tidus flee
+encounter moonflow_south
+tidus flee
+encounter moonflow_south
+tidus flee
+encounter moonflow_south
+tidus flee
+encounter moonflow_south
+tidus flee
+encounter moonflow_south
+tidus flee
+encounter moonflow_south
+tidus flee
+encounter moonflow_south
+tidus flee
+
+heal
+
+/macro extractor grid
+
+encounter extractor
+roll rng4
+tidus haste tidus
+wakka attack m1
+tidus attack m1
+
+roll rng4
+wakka hi-potion tidus
+#wakka attack m1
+tidus haste wakka
+# wakka potion wakka
+wakka attack m1
+tidus cheer
+tidus cheer
+
+roll rng4
+wakka attack m1
+tidus cheer
+wakka attack m1
+tidus cheer
+
+# Tidus changes Weapon
+# weapon tidus 1 lightningstrike
+weapon tidus 4 strength_+5%
+
+wakka attack m1
+tidus attack m1
+wakka attack m1
+roll rng4
+tidus attack m1
+wakka attack m1
+tidus attack m1
+wakka attack m1
+tidus attack m1
+
+status m1
+
+encounter rikku_tutorial
+
+rikku ultra_potion rikku
+
+# rikku frag_grenade bunyip
+
+/macro moonflow grid
+heal
+party tak
+encounter moonflow_north
+tidus flee
+
+# rikku grenade monsters
+
+encounter moonflow_north
+tidus flee
+
+encounter simulation_guadosalam
+tidus flee
+
+# -- Thunder Plains --
+
+
+encounter thunder_plains_south
+tidus flee
+encounter thunder_plains_south
+tidus flee
+encounter thunder_plains_south
+m1 thundara
+tidus flee
+encounter thunder_plains_south
+tidus flee
+encounter thunder_plains_south
+tidus flee
+heal
+encounter thunder_plains_south
+tidus flee
+encounter thunder_plains_south
+tidus flee
+
+
+# Travel Agency
+# encounter simulation_thunder_plains
+
+encounter thunder_plains_north
+# rikku grenade monsters
+tidus flee
+encounter thunder_plains_north
+tidus flee
+encounter thunder_plains_north
+tidus flee
+encounter thunder_plains_north
+tidus flee
+encounter thunder_plains_north
+tidus flee
+
+party rta
+
+encounter thunder_plains_north
+rikku grenade monsters
+tidus defend
+tidus flee
+
+encounter thunder_plains_north
+#rikku defend
+tidus flee
+
+
+# -- Macalania Woods --
+heal
+encounter macalania_woods
+rikku steal m1
+tidus flee
+encounter macalania_woods
+rikku steal m1
+tidus flee
+encounter macalania_woods
+rikku defend
+tidus flee
+encounter macalania_woods
+rikku defend
+tidus flee
+encounter macalania_woods
+tidus flee
+party kta
+
+encounter macalania_woods
+tidus flee
+encounter macalania_woods
+tidus flee
+encounter macalania_woods
+tidus flee
+
+weapon tidus 1 first_strike
+
+encounter spherimorph
+armor tidus 1 lightningproof
+rikku grenade monsters
+element m1 thunder weak
+rikku lightning_bolt
+status m1
+
+/macro crawler grid
+
+# -- Lake Macalania --
+heal
+encounter lake_macalania
+
+encounter crawler
+# crawler will be consistent, but here
+# you can check if lb will overkill
+# negator
+# keep in mind that if you decide to
+# lightning marble crawler first, then
+# negator to get a oneshot, the 2nd
+# negator will not spawn
+# at the start of the fight, crawler's
+# ctb is set to 1 less than whatever the
+# first character has, and since tidus
+# has first strike, it will effectively
+# be set to -1, but since the tracker
+# doesnt allow that, this is another
+# way to simulate this
+# set his ctb to 0
+stat m1 ctb 0
+# then use bit (this spawns the negator)
+m1 bit
+# then decrease ctb by 1
+stat m1 ctb -1
+
+party rlk
+rikku lightning_marble m2
+# rikku lightning_marble m2
+rikku lightning_marble m1
+m1 counter
+m1 countdown
+
+kimahri lightning_marble m1
+m1 counter
+lulu phoenix_down rikku
+m1 countdown
+
+rikku lightning_marble m1
+m1 counter
+party ryk
+yuna mega_phoenix party
+m1 countdown
+
+party rtk
+tidus weapon
+weapon tidus 4 strength_+10% strength_+5% waterstrike
+rikku lightning_bolt
+# if this is the 4th lighning element
+# action that hits crawler, he will use
+# bit as a counter before dieing,
+# spawning the 2nd negator, that
+# that immediately dies since crawler
+# dies
+endencounter
+
+#roll rng27 3
+
+/macro seymour grid
+# Tidus equips Brotherhood
+weapon tidus 4 strength_+10% strength_+5% waterstrike
+
+heal
+
+# -- Macalania Temple --
+encounter seymour
+# this fight can also be complicated
+# but it is also consistent
+# similarly to sahagin chiefs #4, anima
+# is spawned at the start of the fight
+# but her ctb goes from 1 to her max
+# but this doesnt matter since she will
+# be respawned later
+# do this to ignore her for now
+stat m4 hp 0
+# seymour and the guados will also have
+# their ctb set to 1 less than whatever
+# the first character has, here that
+# character is also tidus, but since
+# he doesnt have first strike, it will
+# be some low amount
+# first add or remove ctb so that
+# they have 1 less than tidus
+
+
+stat m1 ctb -12
+stat m2 ctb +1
+stat m3 ctb -11
+# then use their action
+m1 protect
+m3 protect
+m2 shell
+
+tidus haste tidus
+yuna weapon
+kimahri stone_breath
+tidus talk seymour
+stat tidus strength +10
+party tak
+auron defend
+# extra rng4 roll before seymour spells
+roll rng4
+m2 blizzara
+
+tidus defend
+tidus attack m2
+# seymour will "despawn" so ignore him
+stat m2 hp 0
+# anima will have her ctb set to 0
+# the moment tidus kills seymour, so
+# we can simulate that by respawning her
+spawn anima 4
+
+kimahri defend
+auron defend
+party wka
+wakka weapon
+# depending on what this pain does, you
+# might chose to keep tidus and keep
+# attacking, also you might want to
+# steal with kimahri in that case
+# and you can also skip the defend
+# before killing seymour in phase 1
+m4 pain
+# here it assumes tidus was targeted
+# in that case without any changes you
+# will see auron being targeted (they
+# both have the lowest index in the
+# formations tak and wak)
+party wat
+tidus attack m4
+party rat
+rikku steal m4
+tidus attack m4
+m4 boost
+
+rikku steal m4
+tidus attack m4
+tidus attack m4
+# similarly to how anima "respawns",
+# the same thing happens to seymour so
+# it can be simulated the same way
+spawn seymour 2
+
+rikku defend
+tidus weapon
+weapon tidus 1 first_strike
+# if tidus doesn't crit you can attack
+# immediately
+tidus attack m2
+m2 multi_thundara
+# you will notice multi thundara not
+# being implemented in the tracker, the
+# reason is that its targeting is
+# entirely based on rng2, so to avoid
+# confusion i decided to make it
+# unavaible
+# you can simulate the rng rolls used by
+# it in this way
+# TODO: doublecheck this is correct
+roll rng4 3
+roll rng29 2
+
+tidus attack m2
+# tidus attack m2
+stat tidus strength -10
+endencounter
+heal
+/macro wendigo grid
+
+party try
+
+# -- Crevasse --
+# encounter guado_encounter_1
+# encounter guado_encounter_2
+# encounter guado_encounter_3
+encounter crevasse
+tidus flee
+
+encounter crevasse
+tidus flee
+
+heal
+
+encounter wendigo
+tidus haste tidus
+# Tidus equips Brotherhood
+weapon tidus 4 strength_+10% strength_+5% waterstrike
+tidus attack m2
+
+m1 shell m2
+m3 protect m2
+
+
+rikku chaos_grenade monsters
+
+tidus attack m2
+status m2 sleep 0
+m2 does_nothing
+tidus attack m2
+
+m2 activate_counter
+m2 does_nothing
+rikku attack m2
+m2 counter
+
+tidus spiral_cut m2 2.5
+
+
+# -- Bikanel --
+encounter zu
+tidus attack zu_2
+
+/macro bikanel grid
+
+# Tidus equips Sonic Steel
+weapon tidus 1 first_strike
+
+encounter sanubia_desert_east
+tidus flee
+
+encounter sanubia_desert_east
+tidus flee
+
+party tlr
+encounter machina_steal_tutorial
+tidus flee
+
+encounter sanubia_desert_east
+# rikku silence_grenade monsters
+tidus flee
+
+encounter sanubia_desert_central
+tidus flee
+
+encounter sanubia_desert_central
+tidus flee
+
+encounter sanubia_desert_central
+tidus flee
+
+encounter sanubia_desert_ruins
+tidus flee
+
+encounter sanubia_desert_west
+tidus flee
+
+encounter sandragora
+party alr
+auron shooting_star sandragora 3.0
+
+party alt
+encounter sanubia_desert_west
+tidus flee
+
+# -- Home --
+encounter guado_+_3_bomb
+tidus haste tidus
+tidus attack guado_guardian_3
+tidus attack bomb_2
+tidus attack bomb_2
+tidus attack bomb_2
+
+encounter guado_+_2_dual_horn
+party alk
+kimahri lancet dual_horn_2
+kimahri stone_breath
+party alt
+# encounter home
+
+encounter guado_+_2_chimera
+party alk
+kimahri lancet chimera_2
+kimahri stone_breath
+party trk
+
+# -- Airship --
+# encounter airship
+heal
+
+encounter evrae
+tidus haste tidus
+tidus cheer 
+rikku miracle_drink tidus
+
+ kimahri elixir tidus
+# kimahri x-potion tidus
+tidus attack evrae
+tidus attack evrae
+kimahri steal m1
+tidus cheer tidus
+tidus attack evrae
+
+#m3 does_nothing
+m1 does_nothing
+tidus attack evrae
+m2 does_nothing
+tidus attack evrae
+heal
+# -- Bevelle --
+heal
+party tlr
+encounter bevelle_guards_1
+tidus attack warrior_monk
+tidus attack warrior_monk_2
+tidus attack warrior_monk
+
+encounter bevelle_guards_2
+party klr
+heal
+kimahri silence_grenade monsters
+party tlr
+tidus attack m1
+rikku silence_grenade monsters
+
+encounter bevelle_guards_3
+tidus attack warrior_monk
+tidus attack warrior_monk_2
+tidus attack warrior_monk
+
+encounter bevelle_guards_4
+party klr
+heal
+kimahri silence_grenade monsters
+party tlr
+tidus attack m1
+rikku silence_grenade monsters
+
+encounter bevelle_guards_5
+
+#Using AoE throwables
+tidus haste rikku
+rikku silence_grenade monsters
+rikku silence_grenade monsters
+rikku bomb_core m2
+
+# -- Via Purifico --
+
+/macro via purifico grid
+stat yuna magic 29
+stat yuna accuracy 6
+
+encounter via_purifico_corridor
+summon ixion
+ixion attack maze_larva
+
+encounter via_purifico_corridor
+ixion attack maze_larva
+
+encounter via_purifico_corridor
+ixion attack maze_larva
+
+encounter isaaru_grothia
+bahamut attack ifrit_2
+
+encounter isaaru_pterya
+bahamut attack valefor
+
+encounter isaaru_spathi
+m2 does_nothing
+ixion attack m2
+m2 does_nothing
+ixion attack m2
+m2 does_nothing
+ixion attack m2
+m2 does_nothing
+ixion attack m2
+
+# -- Underwater --
+encounter via_purifico_underwater
+# tidus attack sahagin_3
+# tidus attack phlegyas
+
+encounter evrae_altana
+tidus elixir evrae_altana
+tidus elixir evrae_altana
+# tidus phoenix_down evrae_altana
+# tidus phoenix_down evrae_altana
+
+# -- Highbridge --
+/macro highbridge grid
+
+encounter highbridge
+tidus flee
+
+encounter highbridge
+tidus attack ykt-63
+yuna attack ykt-63
+tidus flee
+
+encounter highbridge
+tidus attack ykt-63
+yuna attack ykt-63
+tidus flee
+
+encounter seymour_natus
+tidus attack seymour_natus
+summon bahamut
+bahamut attack seymour_natus
+
+# -- Calm Lands --
+/macro calm lands grid
+party tyk
+
+encounter calm_lands_south_before_defender_x
+encounter calm_lands_south_before_defender_x
+encounter calm_lands_south_before_defender_x
+encounter calm_lands_south_before_defender_x
+
+encounter calm_lands_central_north_east
+encounter calm_lands_central_north_east
+encounter calm_lands_central_north_east
+encounter calm_lands_central_north_east
+encounter calm_lands_central_north_east
+encounter calm_lands_central_north_east
+
+encounter defender_x
+summon bahamut
+bahamut attack defender_x
+bahamut attack defender_x
+
+# -- Cavern of the Stolen Fayth --
+# encounter calm_lands_gorge
+# encounter cave_green_zone
+encounter cave_white_zone
+tidus flee
+encounter cave_white_zone
+tidus flee
+encounter cave_white_zone
+tidus flee
+encounter cave_white_zone
+ixion attack ghost
+# ixion attack ghost
+
+# -- Gagazet --
+encounter biran_&_yenke
+m1 bulldoze
+m2 does_nothing
+kimahri steal m1
+m1 does_nothing
+m2 does_nothing
+m1 does_nothing
+m2 does_nothing
+
+kimahri water_gem yenke_ronso
+m1 does_nothing
+m2 does_nothing
+
+kimahri water_gem biran_ronso
+
+# Post-Ronso grid
+#/macro b&y grid 4 returns
+#macro b&y grid 2/2
+/macro b&y grid 2/2
+# /macro b&y grid 4 friends
+
+weapon yuna 1 first_strike
+
+# encounter gagazet_mountain
+heal
+encounter seymour_flux
+yuna attack m1
+tidus haste yuna
+summon bahamut
+bahamut impulse m1
+status m1
+
+# encounter gagazet_cave
+
+# encounter gagazet_underwater
+
+encounter sanctuary_keeper
+tidus armor_break m1
+bahamut attack m1
+
+# -- Zanarkand --
+# encounter zanarkand_overpass
+
+# encounter zanarkand_dome
+
+# Zanarkand grid
+# /macro zanarkand grid 4 returns
+
+/macro zanarkand grid 2/2
+
+# /macro zanarkand grid 4 friends
+
+encounter spectral_keeper
+bahamut attack spectral_keeper
+bahamut attack spectral_keeper
+
+# Pre-Yunalesca grid
+#/macro yunalesca grid 4 returns
+heal
+
+encounter yunalesca
+summon bahamut
+bahamut attack yunalesca
+bahamut attack yunalesca
+bahamut attack yunalesca
+heal
+# -- Sin --
+encounter left_fin
+bahamut impulse m1
+m2 does_nothing
+m1 does_nothing
+m1 does_nothing
+m2 does_nothing
+bahamut impulse m1
+status m1
+
+encounter right_fin
+summon bahamut
+bahamut impulse m1
+m1 does_nothing
+m1 does_nothing
+m2 does_nothing
+m2 does_nothing
+bahamut impulse m1
+status m1
+
+encounter sin_core
+# bahamut attack sinspawn_genais
+bahamut impulse sin_2
+
+encounter overdrive_sin
+bahamut impulse
+m1 does_nothing
+m1 does_nothing
+bahamut attack sin_3
+# bahamut attack sin_3
+
+# encounter inside_sin_front
+
+encounter seymour_omnis
+tidus armor_break m1
+bahamut attack m1
+
+# encounter inside_sin_back
+
+# -- Nucleus --
+# encounter
+# encounter
+
+/macro bfa grid
+ weapon auron 1 first_strike
+
+encounter bfa
+rikku armor_break m1
+# rikku chaos_grenade
+bahamut attack m1
+
+bahamut attack m1
+bahamut attack braskas_final_aeon
+
+# Possessed Aeons' Luck is 1
+
+encounter possessed_valefor
+stat valefor luck 1
+#yuna attack valefor_c
+# yuna quick_hit valefor_c
+ yuna spare_change valefor_c
+
+encounter possessed_ifrit
+stat ifrit luck 1
+#yuna attack ifrit_c
+# yuna quick_hit ifrit_c
+ yuna spare_change ifrit_c
+
+encounter possessed_ixion
+stat ixion luck 1
+#yuna attack ixion_c
+# yuna quick_hit ixion_c
+ yuna spare_change ixion_c
+
+encounter possessed_shiva
+stat shiva luck 1
+#yuna attack shiva_c
+# yuna quick_hit shiva_c
+ yuna spare_change shiva_c
+
+encounter possessed_bahamut
+stat bahamut luck 1
+#yuna attack bahamut_c
+# yuna quick_hit bahamut_c
+ yuna spare_change bahamut_c
+
+encounter yu_yevon
+tidus zombie_attack m1
+yuna phoenix_down m1

@@ -16,8 +16,10 @@ Implemented:
 - Porting map for the remaining parser, game-state, event, and renderer layers
 - Basic CTB simulation for party changes, RNG advances, early encounter monster ICVs, character/monster turn advancement, haste/slow, and heal
 - Shallow route-continuity support for summon, spawn, stat/status edits, equipment, element edits, placeholder unknown encounters, and the default `ctb_actions_input.txt`
-- Static formation and monster HP/agility loading from vendored upstream data files in `data/`
+- Static formation, character defaults, and action/monster data vendored from the upstream tracker into `data/`
+- Action metadata loading for ranks, status application, buffs, healing, delay flags, and monster-specific target overrides from the upstream bins
 - Verified `wasm-pack build --target web` output in `pkg/`
+- Local smoke-test fixture for the default route script under `fixtures/`
 
 Not implemented yet:
 

@@ -1,0 +1,623 @@
+{
+    "Tidus": {
+        "character": "Tidus",
+        "index": 0,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 520,
+            "MP": 12,
+            "Strength": 15,
+            "Defense": 10,
+            "Magic": 5,
+            "Magic defense": 5,
+            "Agility": 10,
+            "Luck": 18,
+            "Evasion": 10,
+            "Accuracy": 10
+        },
+        "weapon": {
+            "slots": 0,
+            "abilities": [],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 1,
+            "abilities": [],
+            "bonus_crit": 3
+        }
+    },
+    "Yuna": {
+        "character": "Yuna",
+        "index": 1,
+        "starting_s_lv": 2,
+        "stats": {
+            "HP": 475,
+            "MP": 84,
+            "Strength": 5,
+            "Defense": 5,
+            "Magic": 20,
+            "Magic defense": 20,
+            "Agility": 10,
+            "Luck": 17,
+            "Evasion": 30,
+            "Accuracy": 3
+        },
+        "weapon": {
+            "slots": 1,
+            "abilities": [],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 1,
+            "abilities": [],
+            "bonus_crit": 3
+        }
+    },
+    "Auron": {
+        "character": "Auron",
+        "index": 2,
+        "starting_s_lv": 12,
+        "stats": {
+            "HP": 1030,
+            "MP": 33,
+            "Strength": 20,
+            "Defense": 15,
+            "Magic": 5,
+            "Magic defense": 5,
+            "Agility": 5,
+            "Luck": 17,
+            "Evasion": 5,
+            "Accuracy": 3
+        },
+        "weapon": {
+            "slots": 1,
+            "abilities": [
+                "Piercing"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 1,
+            "abilities": [],
+            "bonus_crit": 3
+        }
+    },
+    "Kimahri": {
+        "character": "Kimahri",
+        "index": 3,
+        "starting_s_lv": 6,
+        "stats": {
+            "HP": 644,
+            "MP": 78,
+            "Strength": 16,
+            "Defense": 15,
+            "Magic": 17,
+            "Magic defense": 5,
+            "Agility": 6,
+            "Luck": 18,
+            "Evasion": 5,
+            "Accuracy": 5
+        },
+        "weapon": {
+            "slots": 2,
+            "abilities": [
+                "Piercing",
+                "Sensor"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 0,
+            "abilities": [],
+            "bonus_crit": 0
+        }
+    },
+    "Wakka": {
+        "character": "Wakka",
+        "index": 4,
+        "starting_s_lv": 2,
+        "stats": {
+            "HP": 618,
+            "MP": 10,
+            "Strength": 14,
+            "Defense": 10,
+            "Magic": 10,
+            "Magic defense": 5,
+            "Agility": 7,
+            "Luck": 19,
+            "Evasion": 5,
+            "Accuracy": 25
+        },
+        "weapon": {
+            "slots": 1,
+            "abilities": [],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 0,
+            "abilities": [],
+            "bonus_crit": 0
+        }
+    },
+    "Lulu": {
+        "character": "Lulu",
+        "index": 5,
+        "starting_s_lv": 2,
+        "stats": {
+            "HP": 380,
+            "MP": 92,
+            "Strength": 5,
+            "Defense": 8,
+            "Magic": 20,
+            "Magic defense": 30,
+            "Agility": 5,
+            "Luck": 17,
+            "Evasion": 40,
+            "Accuracy": 3
+        },
+        "weapon": {
+            "slots": 1,
+            "abilities": [],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 1,
+            "abilities": [],
+            "bonus_crit": 3
+        }
+    },
+    "Rikku": {
+        "character": "Rikku",
+        "index": 6,
+        "starting_s_lv": 25,
+        "stats": {
+            "HP": 360,
+            "MP": 85,
+            "Strength": 10,
+            "Defense": 8,
+            "Magic": 10,
+            "Magic defense": 8,
+            "Agility": 16,
+            "Luck": 18,
+            "Evasion": 5,
+            "Accuracy": 5
+        },
+        "weapon": {
+            "slots": 1,
+            "abilities": [],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 1,
+            "abilities": [],
+            "bonus_crit": 3
+        }
+    },
+    "Seymour": {
+        "character": "Seymour",
+        "index": 7,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 1200,
+            "MP": 999,
+            "Strength": 20,
+            "Defense": 25,
+            "Magic": 35,
+            "Magic defense": 100,
+            "Agility": 20,
+            "Luck": 17,
+            "Evasion": 10,
+            "Accuracy": 10
+        },
+        "weapon": {
+            "slots": 1,
+            "abilities": [
+                "Piercing"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 1,
+            "abilities": [
+                "Sensor"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Valefor": {
+        "character": "Valefor",
+        "index": 8,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 14,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Ifrit": {
+        "character": "Ifrit",
+        "index": 9,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Fire Eater",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Ixion": {
+        "character": "Ixion",
+        "index": 10,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Lightning Eater",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Shiva": {
+        "character": "Shiva",
+        "index": 11,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 14,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Ice Eater",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Bahamut": {
+        "character": "Bahamut",
+        "index": 12,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Break Damage Limit",
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Anima": {
+        "character": "Anima",
+        "index": 13,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Break Damage Limit",
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Yojimbo": {
+        "character": "Yojimbo",
+        "index": 14,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Cindy": {
+        "character": "Cindy",
+        "index": 15,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Break Damage Limit",
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Sandy": {
+        "character": "Sandy",
+        "index": 16,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Break Damage Limit",
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Mindy": {
+        "character": "Mindy",
+        "index": 17,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 0,
+            "MP": 0,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 4,
+            "abilities": [
+                "Break Damage Limit",
+                "Piercing",
+                "Aeon Ribbon"
+            ],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 4,
+            "abilities": [
+                "Sensor",
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    },
+    "Unknown": {
+        "character": "Unknown",
+        "index": 18,
+        "starting_s_lv": 0,
+        "stats": {
+            "HP": 99999,
+            "MP": 9999,
+            "Strength": 0,
+            "Defense": 0,
+            "Magic": 0,
+            "Magic defense": 0,
+            "Agility": 0,
+            "Luck": 0,
+            "Evasion": 0,
+            "Accuracy": 0
+        },
+        "weapon": {
+            "slots": 0,
+            "abilities": [],
+            "base_weapon_damage": 16,
+            "bonus_crit": 3
+        },
+        "armor": {
+            "slots": 2,
+            "abilities": [
+                "Break HP Limit",
+                "Break MP Limit"
+            ],
+            "bonus_crit": 3
+        }
+    }
+}

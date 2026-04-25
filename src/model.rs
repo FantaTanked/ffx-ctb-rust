@@ -145,14 +145,111 @@ impl FromStr for MonsterSlot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Status {
     Death,
+    Zombie,
     Eject,
     Petrify,
+    Poison,
+    PowerBreak,
+    MagicBreak,
+    ArmorBreak,
+    MentalBreak,
+    Confuse,
+    Berserk,
+    Provoke,
+    Threaten,
     Sleep,
+    Silence,
+    Dark,
+    Shell,
+    Protect,
+    Reflect,
+    NulTide,
+    NulBlaze,
+    NulShock,
+    NulFrost,
     Haste,
     Slow,
     Regen,
-    Poison,
+    Scan,
+    Shield,
+    Boost,
+    AutoLife,
+    Curse,
+    Defend,
+    Guard,
+    Sentinel,
     Doom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Buff {
+    Cheer,
+    Aim,
+    Focus,
+    Reflex,
+    Luck,
+    Jinx,
+}
+
+impl FromStr for Buff {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "cheer" => Ok(Self::Cheer),
+            "aim" => Ok(Self::Aim),
+            "focus" => Ok(Self::Focus),
+            "reflex" => Ok(Self::Reflex),
+            "luck" => Ok(Self::Luck),
+            "jinx" => Ok(Self::Jinx),
+            _ => Err(()),
+        }
+    }
+}
+
+impl FromStr for Status {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().replace([' ', '-'], "_").as_str() {
+            "death" => Ok(Self::Death),
+            "zombie" => Ok(Self::Zombie),
+            "eject" => Ok(Self::Eject),
+            "petrify" => Ok(Self::Petrify),
+            "poison" => Ok(Self::Poison),
+            "power_break" => Ok(Self::PowerBreak),
+            "magic_break" => Ok(Self::MagicBreak),
+            "armor_break" => Ok(Self::ArmorBreak),
+            "mental_break" => Ok(Self::MentalBreak),
+            "confuse" => Ok(Self::Confuse),
+            "berserk" => Ok(Self::Berserk),
+            "provoke" => Ok(Self::Provoke),
+            "threaten" => Ok(Self::Threaten),
+            "sleep" => Ok(Self::Sleep),
+            "silence" => Ok(Self::Silence),
+            "dark" => Ok(Self::Dark),
+            "shell" => Ok(Self::Shell),
+            "protect" => Ok(Self::Protect),
+            "reflect" => Ok(Self::Reflect),
+            "nultide" => Ok(Self::NulTide),
+            "nulblaze" => Ok(Self::NulBlaze),
+            "nulshock" => Ok(Self::NulShock),
+            "nulfrost" => Ok(Self::NulFrost),
+            "haste" => Ok(Self::Haste),
+            "slow" => Ok(Self::Slow),
+            "regen" => Ok(Self::Regen),
+            "scan" => Ok(Self::Scan),
+            "shield" => Ok(Self::Shield),
+            "boost" => Ok(Self::Boost),
+            "autolife" => Ok(Self::AutoLife),
+            "curse" => Ok(Self::Curse),
+            "defend" => Ok(Self::Defend),
+            "guard" => Ok(Self::Guard),
+            "sentinel" => Ok(Self::Sentinel),
+            "doom" => Ok(Self::Doom),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
