@@ -412,6 +412,9 @@ impl SimulationState {
                 self.apply_delay(target, 3, 1);
             }
         }
+        if action_data.destroys_user {
+            self.apply_status_to_actor(user, Status::Eject);
+        }
     }
 
     fn change_equipment(&mut self, kind: &str, args: &[String]) -> String {
@@ -2055,6 +2058,28 @@ mod tests {
 
         assert!(state.monsters[0].current_hp > 100);
         assert!(state.character_actor(Character::Tidus).unwrap().current_hp < tidus_hp);
+    }
+
+    #[test]
+    fn destroying_actions_eject_the_user() {
+        let mut state = SimulationState::new(1);
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        let action_data =
+            state.action_data_for_actor(ActorId::Monster(MonsterSlot(1)), "self-destruct");
+
+        state.apply_action_effects(
+            ActorId::Monster(MonsterSlot(1)),
+            action_data.as_ref(),
+            &[String::from("tidus")],
+        );
+
+        assert!(state.monsters[0].statuses.contains(&Status::Eject));
     }
 
     #[test]
