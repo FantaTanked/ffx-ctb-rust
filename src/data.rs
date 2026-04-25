@@ -31,6 +31,11 @@ pub struct MonsterStats {
     pub agility: u8,
     pub immune_to_delay: bool,
     pub max_hp: i32,
+    pub strength: i32,
+    pub defense: i32,
+    pub magic: i32,
+    pub magic_defense: i32,
+    pub base_weapon_damage: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +44,11 @@ pub struct CharacterStats {
     pub index: usize,
     pub agility: u8,
     pub max_hp: i32,
+    pub strength: i32,
+    pub defense: i32,
+    pub magic: i32,
+    pub magic_defense: i32,
+    pub base_weapon_damage: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,13 +75,78 @@ pub struct ActionData {
     pub key: String,
     pub rank: i32,
     pub target: ActionTarget,
+    pub damage_formula: DamageFormula,
+    pub base_damage: i32,
+    pub n_of_hits: i32,
     pub uses_weapon_properties: bool,
     pub heals: bool,
+    pub damages_hp: bool,
+    pub damages_mp: bool,
+    pub damages_ctb: bool,
     pub removes_statuses: bool,
     pub has_weak_delay: bool,
     pub has_strong_delay: bool,
     pub statuses: Vec<Status>,
     pub buffs: Vec<ActionBuff>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageFormula {
+    NoDamage,
+    Strength,
+    PiercingStrength,
+    Magic,
+    PiercingMagic,
+    PercentageCurrent,
+    FixedNoVariance,
+    Healing,
+    PercentageTotal,
+    Fixed,
+    PercentageTotalMp,
+    BaseCtb,
+    PercentageCurrentMp,
+    Ctb,
+    PiercingStrengthNoVariance,
+    SpecialMagic,
+    Hp,
+    CelestialHighHp,
+    CelestialHighMp,
+    CelestialLowHp,
+    SpecialMagicNoVariance,
+    Gil,
+    Kills,
+    Deal9999,
+}
+
+impl DamageFormula {
+    fn from_index(index: u8) -> Self {
+        match index {
+            1 => Self::Strength,
+            2 => Self::PiercingStrength,
+            3 => Self::Magic,
+            4 => Self::PiercingMagic,
+            5 => Self::PercentageCurrent,
+            6 => Self::FixedNoVariance,
+            7 => Self::Healing,
+            8 => Self::PercentageTotal,
+            9 => Self::Fixed,
+            10 => Self::PercentageTotalMp,
+            11 => Self::BaseCtb,
+            12 => Self::PercentageCurrentMp,
+            13 => Self::Ctb,
+            14 => Self::PiercingStrengthNoVariance,
+            15 => Self::SpecialMagic,
+            16 => Self::Hp,
+            17 => Self::CelestialHighHp,
+            18 => Self::CelestialHighMp,
+            19 => Self::CelestialLowHp,
+            20 => Self::SpecialMagicNoVariance,
+            21 => Self::Gil,
+            22 => Self::Kills,
+            23 => Self::Deal9999,
+            _ => Self::NoDamage,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +205,14 @@ struct JsonCharacterDefaults {
     character: String,
     index: usize,
     stats: HashMap<String, i32>,
+    #[serde(default)]
+    weapon: JsonEquipmentDefaults,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct JsonEquipmentDefaults {
+    #[serde(default)]
+    base_weapon_damage: i32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -259,6 +342,11 @@ fn parse_characters() -> HashMap<Character, CharacterStats> {
                 .unwrap_or_default()
                 .clamp(0, 255) as u8;
             let max_hp = entry.stats.get("HP").copied().unwrap_or_default();
+            let base_weapon_damage = if entry.weapon.base_weapon_damage == 0 {
+                16
+            } else {
+                entry.weapon.base_weapon_damage
+            };
             Some((
                 character,
                 CharacterStats {
@@ -266,6 +354,15 @@ fn parse_characters() -> HashMap<Character, CharacterStats> {
                     index: entry.index,
                     agility,
                     max_hp,
+                    strength: entry.stats.get("Strength").copied().unwrap_or_default(),
+                    defense: entry.stats.get("Defense").copied().unwrap_or_default(),
+                    magic: entry.stats.get("Magic").copied().unwrap_or_default(),
+                    magic_defense: entry
+                        .stats
+                        .get("Magic defense")
+                        .copied()
+                        .unwrap_or_default(),
+                    base_weapon_damage,
                 },
             ))
         })
@@ -299,8 +396,14 @@ fn parse_actions() -> HashMap<String, ActionData> {
                 key,
                 rank: row[36] as i32,
                 target: parse_action_target(&row),
+                damage_formula: DamageFormula::from_index(row.get(40).copied().unwrap_or_default()),
+                base_damage: row.get(42).copied().unwrap_or_default() as i32,
+                n_of_hits: row.get(43).copied().unwrap_or(1).max(1) as i32,
                 uses_weapon_properties: row[30] & 0x04 != 0,
                 heals: row[32] & 0x10 != 0,
+                damages_hp: row.get(35).copied().unwrap_or_default() & 0x01 != 0,
+                damages_mp: row.get(35).copied().unwrap_or_default() & 0x02 != 0,
+                damages_ctb: row.get(35).copied().unwrap_or_default() & 0x04 != 0,
                 removes_statuses: row[32] & 0x20 != 0,
                 has_weak_delay: row[29] & 0x20 != 0,
                 has_strong_delay: row[29] & 0x40 != 0,
@@ -601,6 +704,11 @@ fn parse_monsters() -> HashMap<String, MonsterStats> {
                 max_hp: add_bytes(&data[20..24]),
                 agility: data[36],
                 immune_to_delay: data[41] & 0b00000001 != 0,
+                strength: data[32] as i32,
+                defense: data[33] as i32,
+                magic: data[34] as i32,
+                magic_defense: data[35] as i32,
+                base_weapon_damage: data[176] as i32,
             },
         );
     }
@@ -713,7 +821,7 @@ fn monster_name_override(index: usize) -> Option<String> {
 mod tests {
     use super::{
         action_data, boss_or_simulated_formation, character_stats, monster_stats, random_formation,
-        ActionTarget,
+        ActionTarget, DamageFormula,
     };
     use crate::model::{Buff, Character, EncounterCondition, Status};
 
@@ -745,6 +853,8 @@ mod tests {
         let sahagin = monster_stats("sahagin_4").unwrap();
         assert_eq!(sahagin.max_hp, 100);
         assert_eq!(sahagin.agility, 5);
+        assert_eq!(sahagin.strength, 3);
+        assert_eq!(sahagin.base_weapon_damage, 0);
     }
 
     #[test]
@@ -753,6 +863,8 @@ mod tests {
         assert_eq!(tidus.index, 0);
         assert_eq!(tidus.max_hp, 520);
         assert_eq!(tidus.agility, 10);
+        assert_eq!(tidus.strength, 15);
+        assert_eq!(tidus.base_weapon_damage, 16);
     }
 
     #[test]
@@ -769,6 +881,19 @@ mod tests {
     fn loads_action_effects_from_upstream_data() {
         let dark_attack = action_data("dark_attack").unwrap();
         assert!(dark_attack.statuses.contains(&Status::Dark));
+
+        let attack = action_data("attack").unwrap();
+        assert_eq!(attack.damage_formula, DamageFormula::Strength);
+        assert!(attack.damages_hp);
+        assert!(attack.uses_weapon_properties);
+
+        let grenade = action_data("grenade").unwrap();
+        assert!(matches!(
+            grenade.damage_formula,
+            DamageFormula::Fixed | DamageFormula::FixedNoVariance
+        ));
+        assert!(grenade.damages_hp);
+        assert!(!grenade.uses_weapon_properties);
 
         let haste = action_data("haste").unwrap();
         assert_eq!(haste.target, ActionTarget::Single);

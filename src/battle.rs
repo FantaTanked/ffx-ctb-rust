@@ -20,6 +20,27 @@ pub enum ActorId {
     Monster(MonsterSlot),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CombatStats {
+    pub strength: i32,
+    pub defense: i32,
+    pub magic: i32,
+    pub magic_defense: i32,
+    pub base_weapon_damage: i32,
+}
+
+impl Default for CombatStats {
+    fn default() -> Self {
+        Self {
+            strength: 10,
+            defense: 10,
+            magic: 10,
+            magic_defense: 10,
+            base_weapon_damage: 16,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BattleActor {
     pub id: ActorId,
@@ -27,6 +48,7 @@ pub struct BattleActor {
     pub index: usize,
     pub agility: u8,
     pub immune_to_delay: bool,
+    pub combat_stats: CombatStats,
     pub current_hp: i32,
     pub max_hp: i32,
     pub ctb: i32,
@@ -83,6 +105,7 @@ impl BattleActor {
             index,
             agility,
             immune_to_delay,
+            combat_stats: CombatStats::default(),
             current_hp: max_hp,
             max_hp,
             ctb: 0,
@@ -121,6 +144,10 @@ impl BattleActor {
     pub fn add_buff(&mut self, buff: Buff, amount: i32) {
         let value = self.buffs.get(&buff).copied().unwrap_or_default() + amount;
         self.buffs.insert(buff, value.clamp(0, 5));
+    }
+
+    pub fn set_combat_stats(&mut self, stats: CombatStats) {
+        self.combat_stats = stats;
     }
 
     pub fn set_weapon_abilities(&mut self, abilities: HashSet<AutoAbility>) {

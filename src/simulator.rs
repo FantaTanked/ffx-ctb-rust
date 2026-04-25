@@ -1,5 +1,5 @@
-use crate::battle::{ActorId, BattleActor, BattleState};
-use crate::data::{self, ActionData, ActionTarget};
+use crate::battle::{ActorId, BattleActor, BattleState, CombatStats};
+use crate::data::{self, ActionData, ActionTarget, DamageFormula};
 use crate::encounter::{character_initial_ctb, encounter_condition_from_roll, monster_initial_ctb};
 use crate::model::{AutoAbility, Buff, Character, EncounterCondition, MonsterSlot, Status};
 use crate::parser::{parse_raw_action_line, ParsedCommand};
@@ -203,13 +203,15 @@ impl SimulationState {
             .map(|name| monster_template(name))
             .collect::<Vec<_>>();
         for (index, template) in templates.iter().enumerate() {
-            self.monsters.push(BattleActor::monster_with_key(
+            let mut actor = BattleActor::monster_with_key(
                 MonsterSlot(index + 1),
                 Some(template.key.clone()),
                 template.agility,
                 template.immune_to_delay,
                 template.max_hp,
-            ));
+            );
+            actor.set_combat_stats(template.combat_stats);
+            self.monsters.push(actor);
         }
         self.advance_duplicate_monster_rngs(&templates);
     }
@@ -369,8 +371,12 @@ impl SimulationState {
         let Some(action_data) = action_data else {
             return;
         };
+        let user_actor = self.actor(user).cloned();
         let targets = self.resolve_action_targets(user, &action_data, args);
         for target in targets {
+            if let Some(user_actor) = user_actor.as_ref() {
+                self.apply_action_damage(user_actor, target, action_data);
+            }
             if action_data.removes_statuses {
                 for status in &action_data.statuses {
                     self.remove_status_from_actor(target, *status);
@@ -380,7 +386,7 @@ impl SimulationState {
                     self.apply_status_to_actor(target, *status);
                 }
             }
-            if action_data.heals {
+            if action_data.heals && !action_data.damages_hp {
                 self.heal_actor(target);
             }
             for buff in &action_data.buffs {
@@ -451,6 +457,7 @@ impl SimulationState {
             template.immune_to_delay,
             template.max_hp,
         );
+        actor.set_combat_stats(template.combat_stats);
         if let Some(ctb) = forced_ctb {
             actor.ctb = ctb;
         }
@@ -662,6 +669,41 @@ impl SimulationState {
             .collect::<Vec<_>>();
         for status in statuses {
             self.apply_status_to_actor(target, status);
+        }
+    }
+
+    fn apply_action_damage(&mut self, user: &BattleActor, target: ActorId, action: &ActionData) {
+        if action.damage_formula == DamageFormula::NoDamage {
+            return;
+        }
+        if !(action.damages_hp || action.damages_mp || action.damages_ctb) {
+            return;
+        }
+        let Some(target_actor) = self.actor(target).cloned() else {
+            return;
+        };
+        let damage = calculate_action_damage(user, &target_actor, action);
+        if action.damages_hp {
+            self.apply_hp_damage(target, damage);
+        }
+        if action.damages_ctb {
+            if let Some(actor) = self.actor_mut(target) {
+                actor.ctb += damage;
+            }
+        }
+    }
+
+    fn apply_hp_damage(&mut self, target: ActorId, damage: i32) {
+        let Some(actor) = self.actor_mut(target) else {
+            return;
+        };
+        actor.current_hp = (actor.current_hp - damage).clamp(0, actor.max_hp.max(1));
+        if actor.current_hp <= 0 {
+            actor.buffs.clear();
+            actor.statuses.clear();
+            actor.statuses.insert(Status::Death);
+        } else {
+            actor.statuses.remove(&Status::Death);
         }
     }
 
@@ -898,7 +940,17 @@ fn default_character_actor(character: Character) -> BattleActor {
         .map(|stats| stats.max_hp)
         .filter(|max_hp| *max_hp > 0)
         .unwrap_or(fallback.2);
-    BattleActor::character(character, index, agility, max_hp)
+    let mut actor = BattleActor::character(character, index, agility, max_hp);
+    if let Some(stats) = stats {
+        actor.set_combat_stats(CombatStats {
+            strength: stats.strength,
+            defense: stats.defense,
+            magic: stats.magic,
+            magic_defense: stats.magic_defense,
+            base_weapon_damage: stats.base_weapon_damage,
+        });
+    }
+    actor
 }
 
 fn fallback_character_defaults(character: Character) -> (usize, u8, i32) {
@@ -931,6 +983,7 @@ struct MonsterTemplate {
     agility: u8,
     immune_to_delay: bool,
     max_hp: i32,
+    combat_stats: CombatStats,
 }
 
 fn monster_template(name: &str) -> MonsterTemplate {
@@ -940,12 +993,20 @@ fn monster_template(name: &str) -> MonsterTemplate {
             agility: stats.agility,
             immune_to_delay: stats.immune_to_delay,
             max_hp: stats.max_hp,
+            combat_stats: CombatStats {
+                strength: stats.strength,
+                defense: stats.defense,
+                magic: stats.magic,
+                magic_defense: stats.magic_defense,
+                base_weapon_damage: stats.base_weapon_damage,
+            },
         })
         .unwrap_or_else(|| MonsterTemplate {
             key: name.to_string(),
             agility: 10,
             immune_to_delay: false,
             max_hp: 1_000,
+            combat_stats: CombatStats::default(),
         })
 }
 
@@ -958,6 +1019,207 @@ fn fallback_action_rank(action: &str) -> i32 {
         "delay_buster" => 8,
         _ => 3,
     })
+}
+
+fn calculate_action_damage(user: &BattleActor, target: &BattleActor, action: &ActionData) -> i32 {
+    let base_damage = if action.uses_weapon_properties {
+        user.combat_stats.base_weapon_damage
+    } else {
+        action.base_damage
+    };
+    let mut damage = match action.damage_formula {
+        DamageFormula::NoDamage => 0,
+        DamageFormula::Fixed => base_damage * 50 * 0xf0 / 256,
+        DamageFormula::FixedNoVariance => base_damage * 50,
+        DamageFormula::PercentageTotal | DamageFormula::PercentageTotalMp => {
+            target.max_hp * base_damage / 16
+        }
+        DamageFormula::PercentageCurrent | DamageFormula::PercentageCurrentMp => {
+            target.current_hp * base_damage / 16
+        }
+        DamageFormula::Hp => user.max_hp * base_damage / 10,
+        DamageFormula::Ctb | DamageFormula::BaseCtb => target.ctb * base_damage / 16,
+        DamageFormula::Deal9999 => 9999 * action.base_damage,
+        DamageFormula::Strength
+        | DamageFormula::PiercingStrength
+        | DamageFormula::Magic
+        | DamageFormula::PiercingMagic
+        | DamageFormula::SpecialMagic
+        | DamageFormula::SpecialMagicNoVariance
+        | DamageFormula::PiercingStrengthNoVariance
+        | DamageFormula::Healing => stat_based_action_damage(user, target, action, base_damage),
+        DamageFormula::CelestialHighHp
+        | DamageFormula::CelestialHighMp
+        | DamageFormula::CelestialLowHp
+        | DamageFormula::Gil
+        | DamageFormula::Kills => 0,
+    };
+    damage *= action.n_of_hits.max(1);
+    damage = apply_damage_status_modifiers(damage, user, target, action);
+    if action.heals && !target.statuses.contains(&Status::Zombie) {
+        -damage
+    } else {
+        damage
+    }
+}
+
+fn stat_based_action_damage(
+    user: &BattleActor,
+    target: &BattleActor,
+    action: &ActionData,
+    base_damage: i32,
+) -> i32 {
+    let (offensive_stat, defensive_stat, defensive_buffs) = match action.damage_formula {
+        DamageFormula::Strength => (
+            user.combat_stats.strength + buff_stacks(user, Buff::Cheer),
+            if target.statuses.contains(&Status::ArmorBreak) {
+                0
+            } else {
+                target.combat_stats.defense.max(1)
+            },
+            buff_stacks(target, Buff::Cheer),
+        ),
+        DamageFormula::PiercingStrength | DamageFormula::PiercingStrengthNoVariance => (
+            user.combat_stats.strength + buff_stacks(user, Buff::Cheer),
+            0,
+            buff_stacks(target, Buff::Cheer),
+        ),
+        DamageFormula::Magic => (
+            user.combat_stats.magic + buff_stacks(user, Buff::Focus),
+            if target.statuses.contains(&Status::MentalBreak) {
+                0
+            } else {
+                target.combat_stats.magic_defense.max(1)
+            },
+            buff_stacks(target, Buff::Focus),
+        ),
+        DamageFormula::PiercingMagic
+        | DamageFormula::SpecialMagic
+        | DamageFormula::SpecialMagicNoVariance => (
+            user.combat_stats.magic + buff_stacks(user, Buff::Focus),
+            0,
+            buff_stacks(target, Buff::Focus),
+        ),
+        DamageFormula::Healing => (
+            user.combat_stats.magic + buff_stacks(user, Buff::Focus),
+            0,
+            buff_stacks(target, Buff::Focus),
+        ),
+        _ => (0, 0, 0),
+    };
+
+    let power = damage_power(action.damage_formula, base_damage, offensive_stat);
+    let mitigation = damage_mitigation(defensive_stat);
+    let damage_1 = i64::from(power) * i64::from(mitigation);
+    let damage_2 = python_div_i64(damage_1 * -1_282_606_671, 0xffff_ffff);
+    let damage_3 = (damage_1 + damage_2) / 0x200 * i64::from(15 - defensive_buffs);
+    let damage_4 = python_div_i64(damage_3 * -2_004_318_071, 0xffff_ffff);
+    let mut damage = ((damage_3 + damage_4) / 0x8) as i32;
+    if matches!(
+        action.damage_formula,
+        DamageFormula::Strength | DamageFormula::PiercingStrength | DamageFormula::SpecialMagic
+    ) {
+        damage = damage * base_damage / 0x10;
+    }
+    damage * 0xf0 / 256
+}
+
+fn damage_power(formula: DamageFormula, base_damage: i32, offensive_stat: i32) -> i32 {
+    match formula {
+        DamageFormula::Strength | DamageFormula::PiercingStrength | DamageFormula::SpecialMagic => {
+            offensive_stat * offensive_stat * offensive_stat / 0x20 + 0x1e
+        }
+        DamageFormula::Healing => (offensive_stat + base_damage) / 2 * base_damage,
+        DamageFormula::Magic | DamageFormula::PiercingMagic => {
+            let power = offensive_stat * offensive_stat;
+            let power = (power as i64 * 0x2AAAAAAB / 0xffff_ffff) as i32;
+            (power + base_damage) * base_damage / 4
+        }
+        DamageFormula::PiercingStrengthNoVariance => {
+            offensive_stat * offensive_stat * offensive_stat / 0x20 + 0x1e
+        }
+        DamageFormula::SpecialMagicNoVariance => {
+            offensive_stat * offensive_stat * offensive_stat / 0x20 + 0x1e
+        }
+        _ => 0,
+    }
+}
+
+fn damage_mitigation(defensive_stat: i32) -> i32 {
+    let mitigation_1 = defensive_stat * defensive_stat;
+    let mitigation_1 = (mitigation_1 as i64 * 0x2E8BA2E9 / 0xffff_ffff) as i32 / 2;
+    let mitigation = defensive_stat * 0x33 - mitigation_1;
+    let mitigation = (mitigation as i64 * 0x66666667 / 0xffff_ffff) as i32;
+    0x2da - mitigation / 4
+}
+
+fn apply_damage_status_modifiers(
+    mut damage: i32,
+    user: &BattleActor,
+    target: &BattleActor,
+    action: &ActionData,
+) -> i32 {
+    if target.statuses.contains(&Status::Boost) {
+        damage = damage * 3 / 2;
+    }
+    if target.statuses.contains(&Status::Shield) {
+        damage /= 4;
+    }
+    if is_physical_formula(action.damage_formula) {
+        if target.statuses.contains(&Status::Protect) {
+            damage /= 2;
+        }
+        if user.statuses.contains(&Status::Berserk) {
+            damage = damage * 3 / 2;
+        }
+        if user.statuses.contains(&Status::PowerBreak) {
+            damage /= 2;
+        }
+        if target.statuses.contains(&Status::Defend) {
+            damage /= 2;
+        }
+    }
+    if is_magical_formula(action.damage_formula) {
+        if target.statuses.contains(&Status::Shell) {
+            damage /= 2;
+        }
+        if user.statuses.contains(&Status::MagicBreak) {
+            damage /= 2;
+        }
+    }
+    damage.min(9999)
+}
+
+fn is_physical_formula(formula: DamageFormula) -> bool {
+    matches!(
+        formula,
+        DamageFormula::Strength
+            | DamageFormula::PiercingStrength
+            | DamageFormula::PiercingStrengthNoVariance
+    )
+}
+
+fn is_magical_formula(formula: DamageFormula) -> bool {
+    matches!(
+        formula,
+        DamageFormula::Magic
+            | DamageFormula::PiercingMagic
+            | DamageFormula::SpecialMagic
+            | DamageFormula::SpecialMagicNoVariance
+            | DamageFormula::Healing
+    )
+}
+
+fn buff_stacks(actor: &BattleActor, buff: Buff) -> i32 {
+    actor.buffs.get(&buff).copied().unwrap_or_default()
+}
+
+fn python_div_i64(numerator: i64, denominator: i64) -> i64 {
+    if numerator >= 0 {
+        numerator / denominator
+    } else {
+        -((-numerator + denominator - 1) / denominator)
+    }
 }
 
 fn parse_summon_name(name: &str) -> Option<Character> {
@@ -1283,5 +1545,49 @@ mod tests {
         );
 
         assert!(state.monsters[0].statuses.contains(&Status::Slow));
+    }
+
+    #[test]
+    fn action_damage_reduces_hp_from_action_data() {
+        let mut state = SimulationState::new(1);
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Tidus), "attack");
+
+        state.apply_action_effects(
+            ActorId::Character(Character::Tidus),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+
+        assert!(state.monsters[0].current_hp < 1_000);
+        assert!(!state.monsters[0].statuses.contains(&Status::Death));
+    }
+
+    #[test]
+    fn healing_actions_restore_partial_hp_without_full_reset() {
+        let mut state = SimulationState::new(1);
+        let tidus = state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap();
+        tidus.current_hp = 100;
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Wakka), "potion");
+
+        state.apply_action_effects(
+            ActorId::Character(Character::Wakka),
+            action_data.as_ref(),
+            &[String::from("tidus")],
+        );
+
+        let tidus = state.character_actor(Character::Tidus).unwrap();
+        assert!(tidus.current_hp > 100);
+        assert!(tidus.current_hp < tidus.max_hp);
     }
 }
