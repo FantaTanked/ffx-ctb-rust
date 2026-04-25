@@ -32,6 +32,11 @@ pub struct MonsterStats {
     pub key: String,
     pub agility: u8,
     pub immune_to_delay: bool,
+    pub armored: bool,
+    pub immune_to_damage: bool,
+    pub immune_to_percentage_damage: bool,
+    pub immune_to_physical_damage: bool,
+    pub immune_to_magical_damage: bool,
     pub max_hp: i32,
     pub strength: i32,
     pub defense: i32,
@@ -79,9 +84,11 @@ pub struct ActionData {
     pub rank: i32,
     pub target: ActionTarget,
     pub damage_formula: DamageFormula,
+    pub damage_type: DamageType,
     pub base_damage: i32,
     pub n_of_hits: i32,
     pub uses_weapon_properties: bool,
+    pub ignores_armored: bool,
     pub heals: bool,
     pub damages_hp: bool,
     pub damages_mp: bool,
@@ -120,6 +127,13 @@ pub enum DamageFormula {
     Gil,
     Kills,
     Deal9999,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageType {
+    Physical,
+    Magical,
+    Other,
 }
 
 impl DamageFormula {
@@ -401,9 +415,11 @@ fn parse_actions() -> HashMap<String, ActionData> {
                 rank: row[36] as i32,
                 target: parse_action_target(&row),
                 damage_formula: DamageFormula::from_index(row.get(40).copied().unwrap_or_default()),
+                damage_type: parse_damage_type(&row),
                 base_damage: row.get(42).copied().unwrap_or_default() as i32,
                 n_of_hits: row.get(43).copied().unwrap_or(1).max(1) as i32,
                 uses_weapon_properties: row[30] & 0x04 != 0,
+                ignores_armored: row[30] & 0x01 != 0,
                 heals: row[32] & 0x10 != 0,
                 damages_hp: row.get(35).copied().unwrap_or_default() & 0x01 != 0,
                 damages_mp: row.get(35).copied().unwrap_or_default() & 0x02 != 0,
@@ -435,6 +451,17 @@ fn parse_actions() -> HashMap<String, ActionData> {
     }
 
     actions
+}
+
+fn parse_damage_type(row: &[u8]) -> DamageType {
+    let flags = row.get(32).copied().unwrap_or_default();
+    if flags & 0b01 != 0 {
+        DamageType::Physical
+    } else if flags & 0b10 != 0 {
+        DamageType::Magical
+    } else {
+        DamageType::Other
+    }
 }
 
 fn parse_action_elements(row: &[u8]) -> Vec<Element> {
@@ -728,6 +755,11 @@ fn parse_monsters() -> HashMap<String, MonsterStats> {
                 max_hp: add_bytes(&data[20..24]),
                 agility: data[36],
                 immune_to_delay: data[41] & 0b00000001 != 0,
+                armored: data[40] & 0b00000001 != 0,
+                immune_to_percentage_damage: data[40] & 0b00000010 != 0,
+                immune_to_physical_damage: data[40] & 0b00100000 != 0,
+                immune_to_magical_damage: data[40] & 0b01000000 != 0,
+                immune_to_damage: data[40] & 0b10000000 != 0,
                 strength: data[32] as i32,
                 defense: data[33] as i32,
                 magic: data[34] as i32,
@@ -873,7 +905,7 @@ fn monster_name_override(index: usize) -> Option<String> {
 mod tests {
     use super::{
         action_data, boss_or_simulated_formation, character_stats, monster_stats, random_formation,
-        ActionTarget, DamageFormula,
+        ActionTarget, DamageFormula, DamageType,
     };
     use crate::model::{Buff, Character, Element, ElementalAffinity, EncounterCondition, Status};
 
@@ -907,6 +939,7 @@ mod tests {
         assert_eq!(sahagin.agility, 5);
         assert_eq!(sahagin.strength, 3);
         assert_eq!(sahagin.base_weapon_damage, 0);
+        assert!(!sahagin.armored);
         assert_eq!(
             sahagin.elemental_affinities.get(&Element::Thunder),
             Some(&ElementalAffinity::Weak)
@@ -940,6 +973,7 @@ mod tests {
 
         let attack = action_data("attack").unwrap();
         assert_eq!(attack.damage_formula, DamageFormula::Strength);
+        assert_eq!(attack.damage_type, DamageType::Physical);
         assert!(attack.damages_hp);
         assert!(attack.uses_weapon_properties);
 

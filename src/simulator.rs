@@ -1,5 +1,5 @@
 use crate::battle::{ActorId, BattleActor, BattleState, CombatStats};
-use crate::data::{self, ActionData, ActionTarget, DamageFormula};
+use crate::data::{self, ActionData, ActionTarget, DamageFormula, DamageType};
 use crate::encounter::{character_initial_ctb, encounter_condition_from_roll, monster_initial_ctb};
 use crate::model::{
     AutoAbility, Buff, Character, Element, ElementalAffinity, EncounterCondition, MonsterSlot,
@@ -215,6 +215,7 @@ impl SimulationState {
             );
             actor.set_combat_stats(template.combat_stats);
             actor.set_elemental_affinities(template.elemental_affinities.clone());
+            apply_damage_traits(&mut actor, template);
             self.monsters.push(actor);
         }
         self.advance_duplicate_monster_rngs(&templates);
@@ -464,6 +465,7 @@ impl SimulationState {
         );
         actor.set_combat_stats(template.combat_stats);
         actor.set_elemental_affinities(template.elemental_affinities.clone());
+        apply_damage_traits(&mut actor, &template);
         if let Some(ctb) = forced_ctb {
             actor.ctb = ctb;
         }
@@ -1012,6 +1014,11 @@ struct MonsterTemplate {
     max_hp: i32,
     combat_stats: CombatStats,
     elemental_affinities: std::collections::HashMap<Element, ElementalAffinity>,
+    armored: bool,
+    immune_to_damage: bool,
+    immune_to_percentage_damage: bool,
+    immune_to_physical_damage: bool,
+    immune_to_magical_damage: bool,
 }
 
 fn monster_template(name: &str) -> MonsterTemplate {
@@ -1029,6 +1036,11 @@ fn monster_template(name: &str) -> MonsterTemplate {
                 base_weapon_damage: stats.base_weapon_damage,
             },
             elemental_affinities: stats.elemental_affinities,
+            armored: stats.armored,
+            immune_to_damage: stats.immune_to_damage,
+            immune_to_percentage_damage: stats.immune_to_percentage_damage,
+            immune_to_physical_damage: stats.immune_to_physical_damage,
+            immune_to_magical_damage: stats.immune_to_magical_damage,
         })
         .unwrap_or_else(|| MonsterTemplate {
             key: name.to_string(),
@@ -1037,7 +1049,20 @@ fn monster_template(name: &str) -> MonsterTemplate {
             max_hp: 1_000,
             combat_stats: CombatStats::default(),
             elemental_affinities: crate::battle::neutral_elemental_affinities(),
+            armored: false,
+            immune_to_damage: false,
+            immune_to_percentage_damage: false,
+            immune_to_physical_damage: false,
+            immune_to_magical_damage: false,
         })
+}
+
+fn apply_damage_traits(actor: &mut BattleActor, template: &MonsterTemplate) {
+    actor.armored = template.armored;
+    actor.immune_to_damage = template.immune_to_damage;
+    actor.immune_to_percentage_damage = template.immune_to_percentage_damage;
+    actor.immune_to_physical_damage = template.immune_to_physical_damage;
+    actor.immune_to_magical_damage = template.immune_to_magical_damage;
 }
 
 fn fallback_action_rank(action: &str) -> i32 {
@@ -1052,6 +1077,15 @@ fn fallback_action_rank(action: &str) -> i32 {
 }
 
 fn calculate_action_damage(user: &BattleActor, target: &BattleActor, action: &ActionData) -> i32 {
+    if target.immune_to_damage {
+        return 0;
+    }
+    if target.immune_to_physical_damage && action.damage_type == DamageType::Physical {
+        return 0;
+    }
+    if target.immune_to_magical_damage && action.damage_type == DamageType::Magical {
+        return 0;
+    }
     let base_damage = if action.uses_weapon_properties {
         user.combat_stats.base_weapon_damage
     } else {
@@ -1062,10 +1096,18 @@ fn calculate_action_damage(user: &BattleActor, target: &BattleActor, action: &Ac
         DamageFormula::Fixed => base_damage * 50 * 0xf0 / 256,
         DamageFormula::FixedNoVariance => base_damage * 50,
         DamageFormula::PercentageTotal | DamageFormula::PercentageTotalMp => {
-            target.max_hp * base_damage / 16
+            if target.immune_to_percentage_damage {
+                0
+            } else {
+                target.max_hp * base_damage / 16
+            }
         }
         DamageFormula::PercentageCurrent | DamageFormula::PercentageCurrentMp => {
-            target.current_hp * base_damage / 16
+            if target.immune_to_percentage_damage {
+                0
+            } else {
+                target.current_hp * base_damage / 16
+            }
         }
         DamageFormula::Hp => user.max_hp * base_damage / 10,
         DamageFormula::Ctb | DamageFormula::BaseCtb => target.ctb * base_damage / 16,
@@ -1196,7 +1238,7 @@ fn apply_damage_status_modifiers(
     if target.statuses.contains(&Status::Shield) {
         damage /= 4;
     }
-    if is_physical_formula(action.damage_formula) {
+    if action.damage_type == DamageType::Physical {
         if target.statuses.contains(&Status::Protect) {
             damage /= 2;
         }
@@ -1210,13 +1252,21 @@ fn apply_damage_status_modifiers(
             damage /= 2;
         }
     }
-    if is_magical_formula(action.damage_formula) {
+    if action.damage_type == DamageType::Magical {
         if target.statuses.contains(&Status::Shell) {
             damage /= 2;
         }
         if user.statuses.contains(&Status::MagicBreak) {
             damage /= 2;
         }
+    }
+    if target.armored
+        && action.damage_type == DamageType::Physical
+        && !action.ignores_armored
+        && !user.has_auto_ability(AutoAbility::Piercing)
+        && !target.statuses.contains(&Status::ArmorBreak)
+    {
+        damage /= 3;
     }
     damage.min(9999)
 }
@@ -1267,26 +1317,6 @@ fn apply_elemental_affinity_modifier(damage: i32, affinity: ElementalAffinity) -
         ElementalAffinity::Weak => damage * 3 / 2,
         ElementalAffinity::Neutral => damage,
     }
-}
-
-fn is_physical_formula(formula: DamageFormula) -> bool {
-    matches!(
-        formula,
-        DamageFormula::Strength
-            | DamageFormula::PiercingStrength
-            | DamageFormula::PiercingStrengthNoVariance
-    )
-}
-
-fn is_magical_formula(formula: DamageFormula) -> bool {
-    matches!(
-        formula,
-        DamageFormula::Magic
-            | DamageFormula::PiercingMagic
-            | DamageFormula::SpecialMagic
-            | DamageFormula::SpecialMagicNoVariance
-            | DamageFormula::Healing
-    )
 }
 
 fn buff_stacks(actor: &BattleActor, buff: Buff) -> i32 {
@@ -1838,5 +1868,69 @@ mod tests {
         );
 
         assert!(weak_state.monsters[0].current_hp < neutral_hp);
+    }
+
+    #[test]
+    fn armored_targets_reduce_non_piercing_physical_damage() {
+        let mut normal_state = SimulationState::new(1);
+        normal_state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        let action_data =
+            normal_state.action_data_for_actor(ActorId::Character(Character::Tidus), "attack");
+        normal_state.apply_action_effects(
+            ActorId::Character(Character::Tidus),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+        let normal_hp = normal_state.monsters[0].current_hp;
+
+        let mut armored_state = SimulationState::new(1);
+        let mut monster = BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        );
+        monster.armored = true;
+        armored_state.monsters.push(monster);
+        let action_data =
+            armored_state.action_data_for_actor(ActorId::Character(Character::Tidus), "attack");
+        armored_state.apply_action_effects(
+            ActorId::Character(Character::Tidus),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+
+        assert!(armored_state.monsters[0].current_hp > normal_hp);
+    }
+
+    #[test]
+    fn damage_immunity_prevents_action_damage() {
+        let mut state = SimulationState::new(1);
+        let mut monster = BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        );
+        monster.immune_to_damage = true;
+        state.monsters.push(monster);
+        let action_data =
+            state.action_data_for_actor(ActorId::Character(Character::Tidus), "attack");
+
+        state.apply_action_effects(
+            ActorId::Character(Character::Tidus),
+            action_data.as_ref(),
+            &[String::from("m1")],
+        );
+
+        assert_eq!(state.monsters[0].current_hp, 1_000);
     }
 }
