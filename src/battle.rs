@@ -14,7 +14,7 @@ const ICV_BASE: [u16; 256] = [
     3, 3, 3, 3, 3, 3, 3, 3,
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActorId {
     Character(Character),
     Monster(MonsterSlot),
@@ -51,6 +51,8 @@ impl Default for CombatStats {
 pub struct BattleActor {
     pub id: ActorId,
     pub monster_key: Option<String>,
+    pub display_slot: Option<MonsterSlot>,
+    pub temporary: bool,
     pub index: usize,
     pub agility: u8,
     pub immune_to_delay: bool,
@@ -60,29 +62,54 @@ pub struct BattleActor {
     pub immune_to_physical_damage: bool,
     pub immune_to_magical_damage: bool,
     pub immune_to_life: bool,
+    pub immune_to_bribe: bool,
     pub combat_stats: CombatStats,
     pub current_hp: i32,
     pub max_hp: i32,
+    pub hp_multiplier: i32,
+    pub break_hp_limit: bool,
+    pub current_mp: i32,
+    pub max_mp: i32,
+    pub mp_multiplier: i32,
+    pub break_mp_limit: bool,
+    pub break_damage_limit: bool,
+    pub equipment_crit: i32,
+    pub weapon_bonus_crit: i32,
+    pub armor_bonus_crit: i32,
+    pub bribe_gil_spent: i32,
     pub ctb: i32,
     pub buffs: HashMap<Buff, i32>,
+    pub weapon_slots: u8,
+    pub armor_slots: u8,
     pub weapon_abilities: HashSet<AutoAbility>,
     pub armor_abilities: HashSet<AutoAbility>,
     pub weapon_elements: HashSet<Element>,
     pub elemental_affinities: HashMap<Element, ElementalAffinity>,
     pub status_resistances: HashMap<Status, u8>,
     pub statuses: HashSet<Status>,
+    pub status_order: Vec<Status>,
+    pub status_stacks: HashMap<Status, i32>,
 }
 
 impl BattleActor {
-    pub fn character(character: Character, index: usize, agility: u8, max_hp: i32) -> Self {
-        Self::new(
+    pub fn character(
+        character: Character,
+        index: usize,
+        agility: u8,
+        max_hp: i32,
+        max_mp: i32,
+    ) -> Self {
+        let mut actor = Self::new(
             ActorId::Character(character),
             None,
             index,
             agility,
             false,
             max_hp,
-        )
+            max_mp,
+        );
+        actor.status_resistances.insert(Status::Threaten, 255);
+        actor
     }
 
     pub fn monster(slot: MonsterSlot, agility: u8, max_hp: i32) -> Self {
@@ -103,6 +130,7 @@ impl BattleActor {
             agility,
             immune_to_delay,
             max_hp,
+            0,
         )
     }
 
@@ -113,10 +141,13 @@ impl BattleActor {
         agility: u8,
         immune_to_delay: bool,
         max_hp: i32,
+        max_mp: i32,
     ) -> Self {
         Self {
             id,
             monster_key,
+            display_slot: None,
+            temporary: false,
             index,
             agility,
             immune_to_delay,
@@ -126,22 +157,68 @@ impl BattleActor {
             immune_to_physical_damage: false,
             immune_to_magical_damage: false,
             immune_to_life: false,
+            immune_to_bribe: false,
             combat_stats: CombatStats::default(),
             current_hp: max_hp,
             max_hp,
+            hp_multiplier: 100,
+            break_hp_limit: false,
+            current_mp: max_mp,
+            max_mp,
+            mp_multiplier: 100,
+            break_mp_limit: false,
+            break_damage_limit: false,
+            equipment_crit: 0,
+            weapon_bonus_crit: 0,
+            armor_bonus_crit: 0,
+            bribe_gil_spent: 0,
             ctb: 0,
             buffs: HashMap::new(),
+            weapon_slots: 0,
+            armor_slots: 0,
             weapon_abilities: HashSet::new(),
             armor_abilities: HashSet::new(),
             weapon_elements: HashSet::new(),
             elemental_affinities: neutral_elemental_affinities(),
             status_resistances: HashMap::new(),
             statuses: HashSet::new(),
+            status_order: Vec::new(),
+            status_stacks: HashMap::new(),
         }
     }
 
     pub fn base_ctb(&self) -> i32 {
         ICV_BASE[self.agility as usize] as i32
+    }
+
+    pub fn effective_max_hp(&self) -> i32 {
+        let multiplier = if self.statuses.contains(&Status::MaxHpX2) {
+            2
+        } else {
+            1
+        };
+        let max_value = match self.id {
+            ActorId::Monster(_) => i32::MAX,
+            ActorId::Character(_) if self.break_hp_limit => 99_999,
+            ActorId::Character(_) => 9_999,
+        };
+        (i64::from(self.max_hp) * i64::from(self.hp_multiplier) / 100 * i64::from(multiplier))
+            .clamp(0, i64::from(max_value)) as i32
+    }
+
+    pub fn effective_max_mp(&self) -> i32 {
+        let multiplier = if self.statuses.contains(&Status::MaxMpX2) {
+            2
+        } else {
+            1
+        };
+        let max_value = match self.id {
+            ActorId::Monster(_) => i32::MAX,
+            ActorId::Character(_) if self.break_mp_limit => 9_999,
+            ActorId::Character(_) => 999,
+        };
+        (i64::from(self.max_mp) * i64::from(self.mp_multiplier) / 100 * i64::from(multiplier))
+            .clamp(0, i64::from(max_value)) as i32
     }
 
     pub fn is_alive(&self) -> bool {
@@ -182,6 +259,14 @@ impl BattleActor {
         self.armor_abilities = abilities;
     }
 
+    pub fn set_weapon_slots(&mut self, slots: u8) {
+        self.weapon_slots = slots;
+    }
+
+    pub fn set_armor_slots(&mut self, slots: u8) {
+        self.armor_slots = slots;
+    }
+
     pub fn set_weapon_elements(&mut self, elements: HashSet<Element>) {
         self.weapon_elements = elements;
     }
@@ -198,20 +283,43 @@ impl BattleActor {
         self.status_resistances = resistances;
     }
 
+    pub fn set_status(&mut self, status: Status, stacks: i32) {
+        if stacks <= 0 {
+            self.remove_status(status);
+            return;
+        }
+        if self.statuses.insert(status) {
+            self.status_order.push(status);
+        }
+        self.status_stacks.insert(status, stacks);
+    }
+
+    pub fn remove_status(&mut self, status: Status) -> bool {
+        self.status_stacks.remove(&status);
+        self.status_order.retain(|ordered| *ordered != status);
+        self.statuses.remove(&status)
+    }
+
+    pub fn clear_statuses(&mut self) {
+        self.statuses.clear();
+        self.status_order.clear();
+        self.status_stacks.clear();
+    }
+
+    pub fn status_stack(&self, status: Status) -> i32 {
+        self.status_stacks.get(&status).copied().unwrap_or(254)
+    }
+
     pub fn has_auto_ability(&self, ability: AutoAbility) -> bool {
         self.weapon_abilities.contains(&ability) || self.armor_abilities.contains(&ability)
     }
 }
 
 pub fn neutral_elemental_affinities() -> HashMap<Element, ElementalAffinity> {
-    [
-        (Element::Fire, ElementalAffinity::Neutral),
-        (Element::Ice, ElementalAffinity::Neutral),
-        (Element::Thunder, ElementalAffinity::Neutral),
-        (Element::Water, ElementalAffinity::Neutral),
-    ]
-    .into_iter()
-    .collect()
+    Element::VALUES
+        .into_iter()
+        .map(|element| (element, ElementalAffinity::Neutral))
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -331,8 +439,8 @@ mod tests {
 
     #[test]
     fn sorts_next_actor_like_python_ctb_sort_key() {
-        let mut tidus = BattleActor::character(Character::Tidus, 0, 20, 520);
-        let mut auron = BattleActor::character(Character::Auron, 2, 5, 1030);
+        let mut tidus = BattleActor::character(Character::Tidus, 0, 20, 520, 12);
+        let mut auron = BattleActor::character(Character::Auron, 2, 5, 1030, 33);
         let mut m1 = BattleActor::monster(MonsterSlot(1), 30, 1000);
         tidus.ctb = 5;
         auron.ctb = 5;
@@ -348,7 +456,7 @@ mod tests {
 
     #[test]
     fn skips_unavailable_actors_for_next_actor() {
-        let mut tidus = BattleActor::character(Character::Tidus, 0, 20, 520);
+        let mut tidus = BattleActor::character(Character::Tidus, 0, 20, 520, 12);
         let mut m1 = BattleActor::monster(MonsterSlot(1), 30, 1000);
         tidus.statuses.insert(Status::Sleep);
         m1.ctb = 2;
@@ -358,8 +466,8 @@ mod tests {
 
     #[test]
     fn applies_virtual_turn_with_haste_and_normalizes_ctb() {
-        let mut tidus = BattleActor::character(Character::Tidus, 0, 20, 520);
-        let mut auron = BattleActor::character(Character::Auron, 2, 5, 1030);
+        let mut tidus = BattleActor::character(Character::Tidus, 0, 20, 520, 12);
+        let mut auron = BattleActor::character(Character::Auron, 2, 5, 1030, 33);
         tidus.statuses.insert(Status::Haste);
         tidus.ctb = 0;
         auron.ctb = 7;

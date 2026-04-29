@@ -1,0 +1,113 @@
+#name or zone,initiative (true or false),label (optional),min,default,max
+sinscales,false,,1,1,1
+ammes,false,,1,1,1
+tanker,false,,1,1,1
+sahagins,false,,1,1,1
+geosgaeno,false,,1,1,1
+klikk_1,false,,1,1,1
+klikk_2,false,,1,1,1
+underwater_ruins,false,Underwater Ruins,0,1,1
+piranhas,false,,1,1,1
+tros,false,,1,1,1
+besaid_lagoon,false,Besaid Lagoon,0,2,4
+wakka_tutorial,false,,1,1,1
+elements_tutorial,false,,1,1,1
+kimahri,false,,1,1,1
+garuda_1,false,,1,1,1
+garuda_2,false,,1,1,1
+besaid_forced_encounter,false,,1,1,1
+besaid_road,false,Besaid Road,0,0,1
+sin_fin,false,,1,1,1
+echuilles,false,,1,1,1
+lancet_tutorial,false,,1,1,1
+lord_ochu,false,Lord Ochu (Way In),0,0,1
+kilika_woods,false,Kilika Woods (Way In),0,2,6
+geneaux,false,,1,1,1
+lord_ochu,false,Lord Ochu (Way Out),0,0,1
+kilika_woods,false,Kilika Woods (Way Out),0,3,6
+machina_1,false,,1,1,1
+machina_2,false,,1,1,1
+machina_3,false,,1,1,1
+oblitzerator,false,,1,1,1
+sahagin_chiefs,false,,1,1,1
+vouivre,false,,1,1,1
+garuda,false,,1,1,1
+pierce_tutorial,false,,1,1,1
+miihen_screen_1,false,Mi'ihen Screen 1,0,4,6
+miihen_screen_2_3,false,Mi'ihen Screen 2-3,0,7,10
+simulation_miihen,false,Simulation (Mi'ihen),0,0,1
+chocobo_eater,false,,1,1,1
+old_road,false,Old Road,0,4,8
+simulation_old_road,false,Simulation (Old Road),0,0,1
+clasko_skip_screen,false,Clasko Skip Screen,0,5,8
+djose_highroad_front_half,false,Djose Highroad (Front Half),0,2,4
+djose_highroad_back_half,false,Djose Highroad (Back Half),0,3,5
+simulation_djose,false,Simulation (Djose),0,1,1
+moonflow_south,false,Moonflow (South),0,8,10
+extractor,false,,1,1,1
+rikku_tutorial,false,,1,1,1
+moonflow_north,false,Moonflow (North),0,3,4
+simulation_guadosalam,false,Simulation (Guadosalam),0,0,1
+thunder_plains_south,false,Thunder Plains (South),0,6,10
+simulation_thunder_plains,false,Simulation (Thunder Plains),0,0,1
+thunder_plains_north,false,Thunder Plains (North),0,8,10
+macalania_woods,false,Macalania Woods,0,8,12
+spherimorph,false,,1,1,1
+lake_macalania,false,Lake Macalania,0,1,2
+crawler,false,,1,1,1
+seymour,false,,1,1,1
+guado_encounter_1,false,Guado Encounter,0,0,2
+crevasse,false,Crevasse,0,2,5
+wendigo,false,,1,1,1
+zu,false,,1,1,1
+sanubia_desert_east,false,Bikanel (Pre Machina),0,2,5
+machina_steal_tutorial,false,,1,1,1
+sanubia_desert_east,false,Bikanel (Post Machina),0,1,5
+sanubia_desert_central,false,Bikanel (Central),0,2,5
+sanubia_desert_ruins,false,Bikanel (Ruins),0,2,5
+sanubia_desert_west,false,Bikanel (Pre Sandragora),0,0,2
+sandragora,false,Sandragora (TP Spheres),0,2,2
+sanubia_desert_west,false,Bikanel (Post Sandragora),0,0,2
+sandragora,false,Sandragora (Skippable),0,0,5
+guado_+_3_bomb,false,,1,1,1
+guado_+_2_dual_horn,false,,1,1,1
+home,false,Home,0,0,2
+guado_+_2_chimera,false,,1,1,1
+airship,false,Airship,0,1,1
+evrae,false,,1,1,1
+bevelle_guards_1,false,,1,1,1
+bevelle_guards_2,false,,1,1,1
+bevelle_guards_3,false,,1,1,1
+bevelle_guards_4,false,,1,1,1
+bevelle_guards_5,false,,1,1,1
+via_purifico_maze,false,Via Purifico (Maze),0,0,2
+via_purifico_corridor,false,Via Purifico (Corridor),0,3,4
+isaaru_grothia,false,,1,1,1
+isaaru_pterya,false,,1,1,1
+isaaru_spathi,false,,1,1,1
+via_purifico_underwater,false,Via Purifico (Underwater),0,2,3
+evrae_altana,false,,1,1,1
+highbridge,false,Highbridge,0,3,5
+seymour_natus,false,,1,1,1
+calm_lands_south_before_defender_x,false,Calm Lands (South),0,4,10
+calm_lands_central_north_east,false,Calm Lands (Central-North-East),0,6,10
+defender_x,false,,1,1,1
+biran_&_yenke,false,Biran & Yenke (pre Cave),0,0,1
+calm_lands_gorge,false,Calm Lands (Gorge),0,0,10
+cave_white_zone cave_green_zone,false,Cave (White zone/Green zone),0,20,50
+biran_&_yenke,false,Biran & Yenke,0,1,1
+gagazet_mountain,false,Gagazet (Outside),0,0,10
+seymour_flux,false,,1,1,1
+gagazet_cave gagazet_underwater,false,Gagazet (Inside),0,0,20
+sanctuary_keeper,false,,1,1,1
+zanarkand_overpass,false,Zanarkand (Overpass),0,0,10
+zanarkand_dome,false,Zanarkand (Dome),0,0,10
+spectral_keeper,false,,1,1,1
+yunalesca,false,,1,1,1
+left_fin,false,,1,1,1
+right_fin,false,,1,1,1
+sin_core,false,,1,1,1
+overdrive_sin,false,,1,1,1
+inside_sin_front,false,Inside Sin (Front),0,0,10
+seymour_omnis,false,,1,1,1
+inside_sin_back,false,Inside Sin (Back),0,0,10

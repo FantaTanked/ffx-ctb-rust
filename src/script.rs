@@ -1,12 +1,15 @@
 use std::collections::HashSet;
 
+const DEFAULT_MACROS_TOML: &str = include_str!("../data/default_macros.toml");
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedScript {
     pub lines: Vec<String>,
 }
 
 pub fn prepare_action_lines(input: &str) -> PreparedScript {
-    let mut lines: Vec<String> = input.lines().map(ToOwned::to_owned).collect();
+    let expanded_input = apply_action_macros(input);
+    let mut lines: Vec<String> = expanded_input.lines().map(ToOwned::to_owned).collect();
     let mut history = Vec::new();
     let mut index = 0;
     while index < lines.len() {
@@ -23,6 +26,14 @@ pub fn prepare_action_lines(input: &str) -> PreparedScript {
     PreparedScript { lines }
 }
 
+pub fn apply_action_macros(input: &str) -> String {
+    let mut text = format!("\n{input}\n");
+    for (name, macro_text) in action_macros() {
+        text = text.replace(&format!("\n/macro {name}\n"), &format!("\n{macro_text}\n"));
+    }
+    text[1..text.len() - 1].to_string()
+}
+
 pub fn edit_action_line(line: &str) -> String {
     let normalized = normalize_roll_alias_line(line);
     let mut words = normalized.split_whitespace();
@@ -34,6 +45,9 @@ pub fn edit_action_line(line: &str) -> String {
         return format!("action {normalized}");
     }
     if is_monster_slot(&lowered) {
+        return format!("monsteraction {normalized}");
+    }
+    if is_monster_name(&lowered) {
         return format!("monsteraction {normalized}");
     }
     if matches!(lowered.as_str(), "weapon" | "armor") {
@@ -111,7 +125,7 @@ fn expand_repeat(lines: &mut Vec<String>, index: usize, history: &[String]) {
     let count = history.len().min(n_of_lines);
     let mut insertion = Vec::with_capacity(times * count);
     for _ in 0..times {
-        insertion.extend(history[history.len() - count..].iter().rev().cloned());
+        insertion.extend(history[history.len() - count..].iter().cloned());
     }
     for (offset, raw) in insertion.into_iter().enumerate() {
         lines.insert(index + 1 + offset, raw);
@@ -150,9 +164,70 @@ fn is_monster_slot(value: &str) -> bool {
     slots.contains(value)
 }
 
+fn is_monster_name(value: &str) -> bool {
+    crate::data::monster_stats(value).is_some()
+}
+
+fn action_macros() -> Vec<(String, String)> {
+    let mut macros = Vec::new();
+    let mut in_actions = false;
+    let mut current_key: Option<String> = None;
+    let mut current_value = Vec::new();
+
+    for raw_line in DEFAULT_MACROS_TOML.lines() {
+        let line = raw_line.trim_end();
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            finish_multiline_macro(&mut macros, &mut current_key, &mut current_value);
+            in_actions = trimmed == "[Actions]";
+            continue;
+        }
+        if !in_actions || trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(key) = current_key.as_ref() {
+            if trimmed == "\"\"\"" {
+                let macro_text = current_value.join("\n").trim_matches('\n').to_string();
+                macros.push((key.clone(), macro_text));
+                current_key = None;
+                current_value.clear();
+            } else {
+                current_value.push(line.to_string());
+            }
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().trim_matches('"').to_string();
+        let value = value.trim();
+        if value == "\"\"\"" {
+            current_key = Some(key);
+            current_value.clear();
+        } else if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
+            macros.push((key, value[1..value.len() - 1].to_string()));
+        }
+    }
+    finish_multiline_macro(&mut macros, &mut current_key, &mut current_value);
+    macros
+}
+
+fn finish_multiline_macro(
+    macros: &mut Vec<(String, String)>,
+    current_key: &mut Option<String>,
+    current_value: &mut Vec<String>,
+) {
+    if let Some(key) = current_key.take() {
+        macros.push((key, current_value.join("\n").trim_matches('\n').to_string()));
+        current_value.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{edit_action_line, normalize_roll_alias_line, prepare_action_lines};
+    use super::{
+        apply_action_macros, edit_action_line, normalize_roll_alias_line, prepare_action_lines,
+    };
 
     #[test]
     fn normalizes_roll_aliases_like_python() {
@@ -178,6 +253,14 @@ mod tests {
         );
         assert_eq!(edit_action_line("m8 spines"), "monsteraction m8 spines");
         assert_eq!(
+            edit_action_line("gandarewa thunder"),
+            "monsteraction gandarewa thunder"
+        );
+        assert_eq!(
+            edit_action_line("Piranha attack"),
+            "monsteraction Piranha attack"
+        );
+        assert_eq!(
             edit_action_line("weapon tidus 1 initiative"),
             "equip weapon tidus 1 initiative"
         );
@@ -195,11 +278,31 @@ mod tests {
                 "a".to_string(),
                 "b".to_string(),
                 "/repeat 2 2".to_string(),
-                "b".to_string(),
                 "a".to_string(),
                 "b".to_string(),
                 "a".to_string(),
+                "b".to_string(),
                 "c".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn expands_action_macros_before_repeat_like_python() {
+        assert_eq!(
+            apply_action_macros("/macro besaid grid"),
+            "stat tidus strength +1"
+        );
+        let prepared = prepare_action_lines("/macro moonflow grid\n/repeat 1 2");
+        assert_eq!(
+            prepared.lines,
+            vec![
+                "stat tidus hp +200".to_string(),
+                "stat tidus strength +1".to_string(),
+                "stat tidus agility +2".to_string(),
+                "/repeat 1 2".to_string(),
+                "stat tidus strength +1".to_string(),
+                "stat tidus agility +2".to_string(),
             ]
         );
     }

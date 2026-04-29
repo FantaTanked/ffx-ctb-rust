@@ -3,26 +3,130 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>FFX CTB Rust</title>
+    <title>FFX CTB Live Editor</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <main>
-      <header>
-        <h1>FFX CTB Rust</h1>
-        <p id="status">Load the WASM package with <code>wasm-pack build --target web</code>.</p>
+    <main class="app-shell" data-mode="ctb">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark">CTB</div>
+          <div>
+            <h1>FFX CTB Live Editor</h1>
+            <p id="status">Load the WASM package with <code>wasm-pack build --target web</code>.</p>
+          </div>
+        </div>
+        <nav class="mode-tabs" aria-label="Tracker mode">
+          <button class="mode-tab is-active" type="button" data-mode="ctb">CTB</button>
+          <button class="mode-tab" type="button" data-mode="drops">Drops</button>
+          <button class="mode-tab" type="button" data-mode="encounters">Encounters</button>
+        </nav>
+        <div class="top-controls">
+          <label class="field seed-field">
+            <span>Seed</span>
+            <input id="seed" inputmode="numeric" type="number" value="3096296922">
+          </label>
+          <button id="openInput" type="button">Open Input</button>
+          <button id="saveInput" type="button">Save Input</button>
+          <button id="saveOutput" type="button">Save Output</button>
+          <button id="sample" type="button">Load Sample</button>
+          <button id="render" type="button">Render CTB</button>
+          <input id="fileInput" type="file" accept=".txt,text/plain">
+        </div>
       </header>
-      <section class="workspace">
-        <label>
-          Seed
-          <input id="seed" type="number" value="3096296922">
-        </label>
-        <label>
-          Input
-          <textarea id="input" spellcheck="false"></textarea>
-        </label>
-        <button id="render" type="button">Render</button>
-        <pre id="output"></pre>
+
+      <section class="workspace" data-mode-panel="ctb">
+        <section class="input-side" aria-label="CTB input">
+          <div class="panel-head">
+            <label class="field search-field">
+              <span>Input Find</span>
+              <input id="inputFind" type="search" autocomplete="off">
+            </label>
+            <button id="inputFindNext" type="button" disabled>Next</button>
+          </div>
+          <textarea id="input" spellcheck="false">encounter tanker
+status atb
+tidus attack m1</textarea>
+          <aside class="tools">
+            <div class="encounter-row">
+              <div>
+                <span class="eyebrow">Current</span>
+                <strong id="currentEncounter">None</strong>
+              </div>
+              <div class="encounter-controls">
+                <button id="prevEncounter" type="button">Previous</button>
+                <button id="nextEncounter" type="button">Next</button>
+              </div>
+            </div>
+            <label class="field">
+              <span>Jump To</span>
+              <select id="encounterSelect"></select>
+            </label>
+            <div id="party" class="tool-card" aria-label="Party at cursor"></div>
+            <div id="chocobo" class="tool-card chocobo" aria-label="Chocobo Eater actions"></div>
+          </aside>
+        </section>
+
+        <div class="resize-handle main-resize" role="separator" aria-orientation="vertical"></div>
+
+        <section class="output-side" aria-label="CTB output">
+          <div class="panel-head">
+            <label class="field search-field">
+              <span>Output Find</span>
+              <input id="outputFind" type="search" autocomplete="off">
+            </label>
+            <button id="outputFindNext" type="button" disabled>Next</button>
+          </div>
+          <div id="summary" class="summary">Ready</div>
+          <pre id="output" aria-live="polite"></pre>
+        </section>
+      </section>
+
+      <section class="tracker-workspace" data-mode-panel="drops" aria-label="Drops tracker">
+        <section class="tracker-pane" data-tracker="drops">
+          <div class="tracker-head">
+            <div>
+              <span class="eyebrow">Tracker</span>
+              <h2>Drops</h2>
+            </div>
+            <div class="tracker-actions">
+              <button id="loadDrops" type="button">Load Defaults</button>
+              <button id="renderDrops" type="button">Render Drops</button>
+            </div>
+          </div>
+          <div class="tracker-body">
+            <textarea id="dropsInput" spellcheck="false" aria-label="Drops input"></textarea>
+            <section class="tracker-output">
+              <div id="dropsSummary" class="tracker-summary">Not loaded</div>
+              <pre id="dropsOutput"></pre>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section class="tracker-workspace" data-mode-panel="encounters" aria-label="Encounters tracker">
+        <section class="tracker-pane" data-tracker="encounters">
+          <div class="tracker-head">
+            <div>
+              <span class="eyebrow">Tracker</span>
+              <h2>Encounters</h2>
+            </div>
+            <div class="tracker-actions">
+              <button id="loadEncountersTracker" type="button">Load Defaults</button>
+              <button id="renderEncountersTracker" type="button">Render Encounters</button>
+            </div>
+          </div>
+          <div class="tracker-body encounters-tracker-body">
+            <section class="tracker-input-stack">
+              <div id="encounterSliders" class="encounter-sliders"></div>
+              <textarea id="encountersTrackerInput" spellcheck="false" aria-label="Encounters tracker input"></textarea>
+            </section>
+            <section class="tracker-output">
+              <div id="encountersTrackerSummary" class="tracker-summary">Not loaded</div>
+              <pre id="encountersTrackerOutput"></pre>
+            </section>
+          </div>
+        </section>
       </section>
     </main>
     <script type="module" src="main.js"></script>

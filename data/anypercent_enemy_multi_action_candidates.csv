@@ -1,0 +1,122 @@
+monster_id,monster_name,action_count,actions
+geosgaeno,Geosgaeno,6,Half HP
+tros,Tros,4, Tentacles
+???,???,2,Attack
+garuda_3,Garuda#3,2,Attack
+dingo,Dingo,2,Attack
+sinscale,Sinscale,3,Spines
+#sinspawn_echuilles,Sinspawn Echuilles,2,Drain Touch
+dinonix,Dinonix,2, Attack
+sinspawn_geneaux,Sinspawn Geneaux,4,Water
+oblitzerator,Oblitzerator,2,Blitzball Rush
+#crane,Crane,3,Crane
+garuda_2,Garuda#2,2,Attack
+miihen_fang,Mi'ihen Fang,2,Attack
+raldo,Raldo,2,Attack
+bomb,Bomb,2,Fire
+dual_horn,Dual Horn,2,Attack
+chocobo_eater,Chocobo Eater,9,Attack
+vouivre,Vouivre,3,Attack
+ipiria,Ipiria,2,Attack
+basilisk,Basilisk,2,Attack
+lamashtu,Lamashtu,3,Attack
+raptor,Raptor,2,Attack
+garm,Garm,2,Attack
+bunyip,Bunyip,2,Attack
+ochu,Ochu,2,Attack
+extractor,Extractor,3,Aqua Shooter
+???_3,???#3,2,Thundara
+???_2,???#2,2,Mimic1
+melusine,Melusine,2,Attack
+kusariqqu,Kusariqqu,3,Attack
+iron_giant,Iron Giant,3,Attack
+iguion,Iguion,2,Attack
+murussu,Murussu,2,Attack
+chimera,Chimera,4,Thundara
+spherimorph,Spherimorph,4,Attack
+snow_wolf,Snow Wolf,2,Attack
+mafdet,Mafdet,2,Attack
+crawler,Crawler,4,Gatling Gun
+guado_guardian,Guado Guardian,6,Blizzard
+seymour,Seymour,18,Fira
+anima,Anima,5,Pain
+guado_guardian_2,Guado Guardian#2,10,Blizzara
+wendigo,Wendigo,5,Attack A
+zu_2,Zu#2,5,Attack
+mushussu,Mushussu,3,Attack
+zu,Zu,4,Attack
+sand_worm,Sand Worm,5,Attack
+cactuar,Cactuar,3,Attack
+guado_guardian_3,Guado Guardian#3,5,Fira
+bomb_2,Bomb#2,2,Fire
+dual_horn_2,Dual Horn#2,2,Attack
+chimera_2,Chimera#2,4,Thundara
+#evrae,Evrae,7,Attack
+ykt-63,YKT-63,2,Attack
+yat-99,YAT-99,2,Single
+cave_iguion,Cave Iguion,2,Attack
+swamp_mafdet,Swamp Mafdet,2,Attack
+#ifrit_2,Ifrit#2,8,Fira
+#valefor,Valefor,8,Attack
+bahamut,Bahamut,3,Mega Flare
+phlegyas,Phlegyas,3,Attack
+remora,Remora,3,Attack
+sahagin_3,Sahagin#3,2,Attack
+octopus,Octopus,2,Attack
+#evrae_altana,Evrae Altana,3,Photon Spray
+seymour_natus,Seymour Natus,11,Flare
+mortibody,Mortibody,8,Fire
+skoll,Skoll,2,Attack
+shred,Shred,2,Attack
+chimera_brain,Chimera Brain,5,Thundara
+malboro,Malboro,2,Gastric Juice
+anacondaur,Anacondaur,4,Sonic Tail
+ogre,Ogre,3,Attack
+mech_scouter_2,Mech Scouter#2,2,Attack
+coeurl,Coeurl,5,Blizzara
+defender_x,Defender X,3,Attack
+biran_ronso,Biran Ronso,5,Blizzard
+yenke_ronso,Yenke Ronso,5,Fire Breath
+epaaj,Epaaj,2,Attack
+yowie,Yowie,2,Attack
+nidhogg,Nidhogg,2,Attack
+dark_element,Dark Element,8,Fira
+ghost,Ghost,5,Doom
+valaha,Valaha,4,Attack
+defender,Defender,2,Attack
+tonberry,Tonberry,3,Attack
+bandersnatch,Bandersnatch,2,Attack
+mech_leader,Mech Leader,2,Attack
+grenade,Grenade,2,Fira
+grat,Grat,2,Seed Cannon
+bashura,Bashura,4,Attack
+#seymour_flux,Seymour Flux,11,Cross Cleave
+mortiorchis,Mortiorchis,2,Command 150
+dark_flan,Dark Flan,6,Demi
+mandragora,Mandragora,4,Earthquake
+grendel,Grendel,4,Attack
+ahriman,Ahriman,2,Ultrasonics
+behemoth,Behemoth,3,Attack
+maelspike,Maelspike,3,Attack
+achelous,Achelous,3,Attack
+#sanctuary_keeper,Sanctuary Keeper,10,Attack
+defender_z,Defender Z,3,Attack
+yat-97,YAT-97,2,Single
+ykt-11,YKT-11,2,Attack
+spectral_keeper,Spectral Keeper,7,Berserk Tail
+circle,Circle,4,Attack
+yunalesca,Yunalesca,13,Mind Blast
+left_fin,Left Fin,7,Smack
+right_fin,Right Fin,7,Smack
+sinspawn_genais,Sinspawn Genais,6,Thrashing
+sin_2,Sin#2,7,Fire
+sin_3,Sin#3,6,Giga-Graviton
+adamantoise,Adamantoise,3,Attack
+gemini,Gemini,4,Attack
+gemini_3,Gemini#3,4,Attack
+behemoth_king,Behemoth King,8,Thundara
+seymour_omnis,Seymour Omnis,11,Thundara
+demonolith,Demonolith,3,Claw
+great_malboro,Great Malboro,4,Munch
+barbatos,Barbatos,4,Attack
+wraith,Wraith,6,Firaga

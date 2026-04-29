@@ -1,0 +1,413 @@
+/usage
+
+# -- Zanarkand --
+party ta
+sinscale_6 auron
+sinscale_6 tidus
+sinscale_6 auron
+sinscale_6 tidus
+sinscale_6 auron
+sinscale_6 tidus
+
+sinscale_6 auron
+sinscale_6 auron
+sinscale_6 auron
+sinscale_6 auron
+sinscale_6 auron
+sinspawn_ammes auron
+
+tanker tidus
+
+# -- Underwater Ruins --
+party t
+sahagin_4 tidus
+sahagin_4 tidus
+
+# Geosgaeno doesn't roll RNG
+
+party tr
+steal klikk
+steal klikk 1
+# steal klikk 1
+# steal klikk 2
+klikk tidus
+
+# Chain encounter
+# /* 2 Piranhas encounter
+steal piranha
+piranha tidus
+steal piranha_2
+piranha_2 tidus
+# */
+
+/* Single Piranha encounter
+steal piranha_3
+steal piranha_3 1
+piranha_3 tidus
+# */
+
+# Forced fight
+steal piranha_3
+steal piranha_3
+piranha_3 tidus
+piranha_3 tidus
+
+# steal tros
+tros rikku
+
+# -- Besaid --
+party tw
+piranha tidus
+piranha_2 wakka
+# piranha_3 wakka
+
+# Forced encounters
+party tywl
+dingo tidus
+condor wakka
+water_flan lulu
+??? tidus
+garuda_3 valefor
+dingo_2 tidus
+condor_2 wakka
+water_flan_2 lulu
+
+# -- S.S. Liki --
+party tykwl
+sin valefor
+sinspawn_echuilles tidus
+sinscale_3 tidus
+sinscale_3 tidus
+sinscale_3 tidus
+sinscale_3 tidus
+
+# -- Kilika --
+# forced fight
+ragora_2 tidus
+
+dinonix tidus
+killer_bee wakka
+yellow_element lulu
+
+dinonix tidus
+killer_bee wakka
+yellow_element lulu
+
+geneauxs_tentacle valefor
+geneauxs_tentacle valefor
+sinspawn_geneaux valefor
+
+dinonix tidus
+killer_bee wakka
+yellow_element lulu
+
+dinonix tidus
+killer_bee wakka
+yellow_element lulu
+
+# -- Luca --
+# Fight 1
+worker lulu
+worker lulu
+
+# Fight 2
+worker lulu
+worker lulu
+
+# Fight 3
+worker lulu
+worker kimahri
+worker lulu
+worker lulu
+worker lulu
+worker tidus
+
+oblitzerator tidus
+
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+
+# Forced encounters
+party tyakwl
+vouivre_2 auron
+# death tidus
+# death wakka
+garuda_2 auron
+
+# -- Mi'ihen --
+# Piercing tutorial
+raldo_2 auron
+# death
+
+# Chocobo Eater
+# death
+
+# -- Old Road --
+# death
+
+# -- Clasko Skip Screen --
+# death
+
+# -- Djose --
+# death
+
+# -- Moonflow --
+# death
+
+extractor wakka
+
+party tyakwlr
+# ??? n.3 is the tutorial chest
+# it dies when you steal from it
+steal ???_3
+???_3 rikku
+# bunyip rikku
+
+# ???_2 rikku
+# bunyip_2 rikku
+# bite_bug rikku
+# bite_bug rikku
+
+# -- Thunder Plains --
+# buer rikku
+# buer rikku
+steal iron_giant
+death rikku
+# steal larva
+# steal melusine
+
+# -- Macalania Woods --
+steal chimera
+steal blue_element
+# steal iguion
+
+spherimorph rikku
+
+# -- Lake Macalania --
+negator rikku
+death rikku
+death kimahri
+death rikku
+# An additional negator dies
+# at the end of the fight
+negator unknown
+crawler rikku
+
+# -- Macalania Temple --
+# Seymour
+guado_guardian kimahri
+guado_guardian kimahri
+steal anima
+death ???
+steal anima 1
+# steal anima 1
+# steal anima 2
+anima tidus
+death rikku
+seymour tidus
+
+# -- Crevasse --
+# Wendigo
+guado_guardian_2 tidus
+# death
+# death
+# death
+# death
+# steal guado_guardian_2
+wendigo tidus
+guado_guardian_2 tidus
+
+# -- Bikanel --
+party takwlr
+
+# Bikanel Desert monsters
+# steal zu
+# steal sand_wolf
+# steal alcyone
+# sand_wolf rikku
+# alcyone rikku
+# mushussu rikku
+
+# if you kill a chest monster
+# ???_2 rikku
+
+sandragora auron
+
+# -- Home --
+# Fight 1
+guado_guardian_3 tidus
+bomb_2 tidus
+bomb_2 tidus
+bomb_2 tidus
+
+# In the next 2 fights the order
+# is random (w/ Stone Breath)
+# Fight 2
+guado_guardian_3 kimahri
+dual_horn_2 kimahri
+dual_horn_2 kimahri
+
+# Fight 3
+guado_guardian_3 kimahri
+chimera_2 kimahri
+chimera_2 kimahri
+
+# -- Airship --
+steal evrae
+death ???
+# steal evrae 1
+# death ???
+evrae tidus
+
+# -- Bevelle --
+# Fight 1
+warrior_monk tidus
+rifle tidus
+warrior_monk_2 tidus
+fire_rifle tidus
+warrior_monk tidus
+rifle tidus
+
+# Fight 2
+ykt-63 tidus
+warrior_monk_2 kimahri
+warrior_monk_2 kimahri
+fire_rifle kimahri
+fire_rifle kimahri
+
+# Fight 3
+warrior_monk tidus
+rifle tidus
+warrior_monk_2 tidus
+fire_rifle tidus
+warrior_monk tidus
+rifle tidus
+
+# Fight 4
+ykt-63 tidus
+warrior_monk_2 kimahri
+warrior_monk_2 kimahri
+fire_rifle kimahri
+fire_rifle kimahri
+
+# Fight 5
+# /* Using AoE throwables
+warrior_monk rikku
+warrior_monk rikku
+rifle rikku
+rifle rikku
+yat-99 rikku
+# */
+
+/* Using Sleeping Powders
+warrior_monk rikku
+yat-99 rikku
+warrior_monk rikku
+rifle rikku
+rifle rikku
+# */
+
+/* Using Bomb Cores
+warrior_monk tidus
+rifle tidus
+warrior_monk tidus
+rifle tidus
+yat-99 kimahri
+# */
+
+# -- Via Purifico --
+party ya
+maze_larva ixion
+maze_larva ixion
+# maze_larva ixion
+
+# isaaru summons
+ifrit_2 bahamut
+valefor bahamut
+bahamut ixion
+# bahamut drops 2 items
+# but the items are both nothing
+roll rng11 2
+
+# -- Underwater --
+party twr
+
+# phlegyas tidus
+# sahagin_3 tidus
+
+# death
+evrae_altana tidus
+
+# -- Highbridge --
+party tyawlr
+ykt-63 yuna
+
+party tyakwlr
+seymour_natus bahamut
+
+# -- Calm Lands --
+# steal flame_flan
+defender_x bahamut
+
+# If you need more equipment drops
+# Biran and Yenke always drop equipment
+# steal biran_ronso
+# yenke_ronso kimahri
+# biran_ronso kimahri
+
+# Malboros can drop equipment with 2 abilities
+# malboro bahamut
+
+# Epaajs always spawn outside the cave
+# They have 50% chance to drop equipment
+# epaaj ixion
+
+# -- Cavern of the Stolen Fayth --
+# Killing monsters with a party member
+# Might change the equipment owner
+# ghost yuna
+# ghost tidus
+ghost ixion
+/repeat 30
+
+# -- Gagazet --
+steal biran_ronso
+yenke_ronso kimahri
+biran_ronso kimahri
+
+# If Flux dies from poison
+# the killer is "unknown"
+seymour_flux yuna
+
+sanctuary_keeper bahamut
+
+# -- Zanarkand --
+spectral_keeper bahamut
+
+yunalesca bahamut
+
+# -- Sin --
+left_fin bahamut
+
+right_fin bahamut
+
+sin_2 bahamut
+
+sin_3 bahamut
+
+seymour_omnis bahamut

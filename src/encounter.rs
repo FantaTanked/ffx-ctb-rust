@@ -56,8 +56,7 @@ pub fn character_initial_ctb(
                 return None;
             }
             let variance = ICV_VARIANCE[actor.agility as usize] as u32 + 1;
-            let roll =
-                variance_roll.expect("normal encounter character ICV requires variance roll");
+            let roll = variance_roll?;
             let raw_ctb = actor.base_ctb() * 3 - (roll % variance) as i32;
             Some(apply_haste_to_raw_ctb(actor, raw_ctb))
         }
@@ -73,7 +72,7 @@ pub fn monster_initial_ctb(
         EncounterCondition::Preemptive => Some(actor.base_ctb() * 3),
         EncounterCondition::Ambush => None,
         EncounterCondition::Normal => {
-            let roll = variance_roll.expect("normal encounter monster ICV requires variance roll");
+            let roll = variance_roll?;
             let variance = 100 - (roll % 11) as i32;
             Some((actor.base_ctb() * 3 * 100) / variance)
         }
@@ -127,7 +126,7 @@ mod tests {
 
     #[test]
     fn initializes_character_ctb_for_normal_encounter() {
-        let tidus = BattleActor::character(Character::Tidus, 0, 20, 520);
+        let tidus = BattleActor::character(Character::Tidus, 0, 20, 520, 12);
         assert_eq!(
             character_initial_ctb(&tidus, EncounterCondition::Normal, Some(123), true, false),
             Some(30)
@@ -140,7 +139,7 @@ mod tests {
 
     #[test]
     fn initializes_character_ctb_for_ambush_with_haste() {
-        let mut tidus = BattleActor::character(Character::Tidus, 0, 20, 520);
+        let mut tidus = BattleActor::character(Character::Tidus, 0, 20, 520, 12);
         tidus.statuses.insert(Status::Haste);
         assert_eq!(
             character_initial_ctb(&tidus, EncounterCondition::Ambush, None, true, false),
@@ -154,7 +153,7 @@ mod tests {
 
     #[test]
     fn initializes_magis_sisters_like_python() {
-        let sandy = BattleActor::character(Character::Sandy, 16, 20, 3200);
+        let sandy = BattleActor::character(Character::Sandy, 16, 20, 3200, 999);
         assert_eq!(
             character_initial_ctb(&sandy, EncounterCondition::Ambush, None, false, true),
             Some(30)
@@ -179,6 +178,20 @@ mod tests {
         assert_eq!(
             monster_initial_ctb(&monster, EncounterCondition::Normal, Some(123)),
             Some(30)
+        );
+    }
+
+    #[test]
+    fn normal_icv_without_variance_roll_returns_none_instead_of_panicking() {
+        let tidus = BattleActor::character(Character::Tidus, 0, 20, 520, 12);
+        let monster = BattleActor::monster(MonsterSlot(1), 20, 1000);
+        assert_eq!(
+            character_initial_ctb(&tidus, EncounterCondition::Normal, None, true, false),
+            None
+        );
+        assert_eq!(
+            monster_initial_ctb(&monster, EncounterCondition::Normal, None),
+            None
         );
     }
 }

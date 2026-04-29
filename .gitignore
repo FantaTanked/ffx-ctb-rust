@@ -1,5 +1,7 @@
 /target/
+/target-*/
 /pkg/
 /dist/
+.codex-write-test/
 *.log
 .DS_Store
