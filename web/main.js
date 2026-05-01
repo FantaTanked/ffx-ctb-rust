@@ -1,16 +1,19 @@
 const status = document.querySelector("#status");
 const appShell = document.querySelector(".app-shell");
 const modeTabs = [...document.querySelectorAll(".mode-tab")];
+const modePanels = [...document.querySelectorAll("[data-mode-panel]")];
 const seedInput = document.querySelector("#seed");
 const input = document.querySelector("#input");
 const output = document.querySelector("#output");
-const renderButton = document.querySelector("#render");
+const inputFind = document.querySelector("#inputFind");
+const inputFindNext = document.querySelector("#inputFindNext");
+const outputFind = document.querySelector("#outputFind");
+const outputFindNext = document.querySelector("#outputFindNext");
 const sampleButton = document.querySelector("#sample");
 const openInputButton = document.querySelector("#openInput");
 const saveInputButton = document.querySelector("#saveInput");
 const saveOutputButton = document.querySelector("#saveOutput");
 const fileInput = document.querySelector("#fileInput");
-const summary = document.querySelector("#summary");
 const party = document.querySelector("#party");
 const chocobo = document.querySelector("#chocobo");
 const tanker = document.querySelector("#tanker");
@@ -22,33 +25,41 @@ const trackerPanes = {
   drops: {
     input: document.querySelector("#dropsInput"),
     output: document.querySelector("#dropsOutput"),
-    summary: document.querySelector("#dropsSummary"),
+    open: document.querySelector("#openDrops"),
+    save: document.querySelector("#saveDrops"),
     load: document.querySelector("#loadDrops"),
-    render: document.querySelector("#renderDrops"),
     noEncounters: document.querySelector("#searchNoEncounters"),
   },
   encounters: {
     input: document.querySelector("#encountersTrackerInput"),
     output: document.querySelector("#encountersTrackerOutput"),
-    summary: document.querySelector("#encountersTrackerSummary"),
+    open: document.querySelector("#openEncountersTracker"),
+    save: document.querySelector("#saveEncountersTracker"),
     load: document.querySelector("#loadEncountersTracker"),
-    render: document.querySelector("#renderEncountersTracker"),
     sliders: document.querySelector("#encounterSliders"),
     sliderData: [],
   },
 };
 
-const APP_BUILD_ID = "ctb-tracker-render-20260430-224";
+const APP_BUILD_ID = "ctb-tracker-render-20260501-262";
+const WORKSPACE_STORAGE_KEY = "ffxCtbRustWorkspace.v1";
+const AUTO_RENDER_DELAY_MS = 450;
 let lastRendered = null;
 let lastRenderedInput = null;
 let tankerPatternValue = "awsdn-";
+let activeModes = new Set(["ctb"]);
+let ctbRenderTimer = null;
+let cursorUiTimer = null;
+let ctbRenderRevision = 0;
+let pendingFileTarget = "ctb";
+let outputFindLineIndex = -1;
 
 let wasm = null;
 
 async function loadWasm() {
   if (wasm) return wasm;
   const module = await import(`../pkg/ffx_ctb_rust.js?v=${APP_BUILD_ID}`);
-  await module.default();
+  await module.default(`../pkg/ffx_ctb_rust_bg.wasm?v=${APP_BUILD_ID}`);
   wasm = module;
   status.textContent = "WASM loaded";
   return wasm;
@@ -62,67 +73,151 @@ async function loadSample() {
     const sample = JSON.parse(module.sample_json());
     seedInput.value = sample.seed;
     input.value = sample.input || "";
+    moveCursorToFirstEncounter();
+    saveWorkspaceCache();
     await renderCurrentInput();
   } catch (error) {
     status.textContent = error?.message || String(error);
   }
 }
 
-renderButton.addEventListener("click", async () => {
-  await renderCurrentInput();
-});
-
 input.addEventListener("keyup", updateCursorUi);
 input.addEventListener("click", updateCursorUi);
-input.addEventListener("input", updateCursorUi);
+input.addEventListener("input", () => {
+  saveWorkspaceCache();
+  scheduleCursorUi();
+  scheduleCtbRender();
+});
+inputFind.addEventListener("input", updateInputFindState);
+inputFind.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    findNextInputMatch();
+  }
+});
+inputFindNext.addEventListener("click", findNextInputMatch);
+outputFind.addEventListener("input", updateOutputFindState);
+outputFind.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    findNextOutputMatch();
+  }
+});
+outputFindNext.addEventListener("click", findNextOutputMatch);
+seedInput.addEventListener("input", () => {
+  saveWorkspaceCache();
+  scheduleVisibleRenders();
+});
 
-openInputButton.addEventListener("click", () => fileInput.click());
+openInputButton.addEventListener("click", () => openTextFileFor("ctb"));
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files?.[0];
   if (!file) return;
-  input.value = await file.text();
-  input.selectionStart = input.selectionEnd = 0;
+  await loadTextFileIntoTarget(pendingFileTarget, await file.text());
   fileInput.value = "";
-  await renderCurrentInput();
 });
 saveInputButton.addEventListener("click", () => downloadText("ctb_actions_input.txt", input.value));
 saveOutputButton.addEventListener("click", () => downloadText("ctb_output.txt", output.textContent || ""));
 prevEncounterButton.addEventListener("click", () => jumpRelativeEncounter(-1));
 nextEncounterButton.addEventListener("click", () => jumpRelativeEncounter(1));
 encounterSelect.addEventListener("change", () => {
-  const encounter = encounterList().find((item) => String(item.index) === encounterSelect.value);
-  if (encounter) jumpToLine(encounter.start_line);
+  const list = encounterList();
+  const position = Number.parseInt(encounterSelect.value, 10);
+  if (Number.isFinite(position) && list[position]) jumpToEncounter(list[position], position);
 });
 Object.entries(trackerPanes).forEach(([tracker, pane]) => {
+  pane.open?.addEventListener("click", () => openTextFileFor(tracker));
+  pane.save?.addEventListener("click", () => saveTrackerInput(tracker));
   pane.load.addEventListener("click", () => loadTrackerDefault(tracker));
-  pane.render.addEventListener("click", () => renderTracker(tracker));
+  pane.input.addEventListener("input", () => {
+    saveWorkspaceCache();
+    scheduleTrackerRender(tracker);
+  });
 });
 trackerPanes.drops.noEncounters?.addEventListener("click", searchNoEncountersRoutes);
 modeTabs.forEach((tab) => {
-  tab.addEventListener("click", () => setMode(tab.dataset.mode || "ctb"));
+  tab.addEventListener("click", () => toggleMode(tab.dataset.mode || "ctb"));
 });
+setupResizeHandles();
+updateVisibleModes();
 
-function setMode(mode) {
-  appShell.dataset.mode = mode;
+function toggleMode(mode) {
+  if (activeModes.has(mode)) {
+    activeModes.delete(mode);
+  } else {
+    activeModes.add(mode);
+  }
+  if (!activeModes.size) activeModes.add(mode);
+  updateVisibleModes();
+  saveWorkspaceCache();
+  scheduleVisibleRenders();
+}
+
+function updateVisibleModes() {
+  const visiblePanels = [];
+  modePanels.forEach((panel) => {
+    const visible = activeModes.has(panel.dataset.modePanel);
+    panel.classList.toggle("is-visible", visible);
+    panel.classList.remove("visible-index-1", "visible-index-2", "visible-index-3");
+    if (visible) visiblePanels.push(panel);
+  });
+  visiblePanels.forEach((panel, index) => {
+    panel.classList.add(`visible-index-${index + 1}`);
+  });
+  appShell.dataset.visibleCount = String(visiblePanels.length || 1);
+  appShell.dataset.ctbVisible = activeModes.has("ctb") ? "true" : "false";
+  appShell.dataset.trackerPair = activeModes.has("drops") && activeModes.has("encounters") ? "true" : "false";
   modeTabs.forEach((tab) => {
-    tab.classList.toggle("is-active", tab.dataset.mode === mode);
+    const active = activeModes.has(tab.dataset.mode);
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-pressed", active ? "true" : "false");
   });
 }
 
+function scheduleVisibleRenders() {
+  if (activeModes.has("ctb")) scheduleCtbRender();
+  if (activeModes.has("drops")) scheduleTrackerRender("drops");
+  if (activeModes.has("encounters")) scheduleTrackerRender("encounters");
+}
+
+function scheduleCtbRender() {
+  ctbRenderRevision += 1;
+  const revision = ctbRenderRevision;
+  clearTimeout(ctbRenderTimer);
+  ctbRenderTimer = setTimeout(async () => {
+    if (revision !== ctbRenderRevision) return;
+    await renderCurrentInput();
+  }, AUTO_RENDER_DELAY_MS);
+}
+
+function scheduleCursorUi() {
+  clearTimeout(cursorUiTimer);
+  cursorUiTimer = setTimeout(updateCursorUi, 120);
+}
+
+function scheduleTrackerRender(tracker) {
+  const pane = trackerPanes[tracker];
+  pane.renderRevision = (pane.renderRevision || 0) + 1;
+  const revision = pane.renderRevision;
+  clearTimeout(pane.renderTimer);
+  pane.renderTimer = setTimeout(async () => {
+    if (revision !== pane.renderRevision) return;
+    await renderTracker(tracker);
+  }, AUTO_RENDER_DELAY_MS);
+}
+
 async function renderCurrentInput() {
+  ctbRenderRevision += 1;
   try {
     const module = await loadWasm();
     const seed = Number.parseInt(seedInput.value, 10) >>> 0;
-    const started = performance.now();
     const rawRendered = lastRenderedInput === null
       ? module.render_ctb_json(seed, input.value)
       : module.render_ctb_diff_json(seed, input.value, lastRenderedInput);
     const rendered = JSON.parse(rawRendered);
-    const durationSeconds = rendered.duration_seconds || (performance.now() - started) / 1000;
     lastRendered = rendered;
     lastRenderedInput = input.value;
-    output.textContent = rendered.output || "";
-    summary.textContent = `${rendered.prepared_line_count} prepared lines | from line ${rendered.changed_line || 1} | ${rendered.encounters.length} encounters | ${rendered.unsupported_count} unsupported | ${durationSeconds.toFixed(3)}s`;
+    renderOutputText(output, rendered.output || "", "ctb");
     const partyPayload = renderParty(module, seed);
     renderChocoboTools(module, seed, rendered, partyPayload);
     renderTankerTools(module, rendered);
@@ -140,31 +235,29 @@ async function loadTrackerDefault(tracker) {
     const seed = Number.parseInt(seedInput.value, 10) >>> 0;
     const payload = JSON.parse(module.tracker_default_json(tracker, seed));
     pane.input.value = payload.input || "";
-    pane.output.textContent = "";
-    pane.summary.textContent = `${payload.input_filename} loaded`;
+    renderOutputText(pane.output, "", tracker);
     if (tracker === "encounters") {
       pane.sliderData = Array.isArray(payload.sliders) ? payload.sliders : [];
       renderEncounterSliderControls(pane);
     }
+    saveWorkspaceCache();
     await renderTracker(tracker);
   } catch (error) {
-    pane.summary.textContent = error?.message || String(error);
+    status.textContent = error?.message || String(error);
   }
 }
 
 async function renderTracker(tracker) {
   const pane = trackerPanes[tracker];
+  pane.renderRevision = (pane.renderRevision || 0) + 1;
   try {
     const module = await loadWasm();
     const seed = Number.parseInt(seedInput.value, 10) >>> 0;
-    const started = performance.now();
     const payload = JSON.parse(module.tracker_render_json(tracker, seed, pane.input.value));
-    const durationSeconds = payload.duration_seconds || (performance.now() - started) / 1000;
     pane.lastRenderedInput = pane.input.value;
-    pane.output.textContent = payload.output || "";
-    pane.summary.textContent = `${payload.output_filename} | rendered | ${durationSeconds.toFixed(3)}s`;
+    renderOutputText(pane.output, payload.output || "", tracker);
   } catch (error) {
-    pane.summary.textContent = error?.message || String(error);
+    status.textContent = error?.message || String(error);
   }
 }
 
@@ -187,16 +280,246 @@ async function searchNoEncountersRoutes() {
     ));
     if (typeof payload.edited_input === "string" && payload.edited_input !== pane.input.value) {
       pane.input.value = payload.edited_input;
+      saveWorkspaceCache();
     }
-    pane.output.textContent = payload.output || "";
-    pane.summary.textContent = `No Encounters search | line ${startLine}`;
+    renderOutputText(pane.output, payload.output || "", "drops");
   } catch (error) {
-    pane.summary.textContent = error?.message || String(error);
+    status.textContent = error?.message || String(error);
   }
 }
 
 function textareaCursorLine(textarea) {
   return textarea.value.slice(0, textarea.selectionStart || 0).split("\n").length;
+}
+
+function updateInputFindState() {
+  const query = inputFind.value;
+  inputFindNext.disabled = !query || !input.value.toLowerCase().includes(query.toLowerCase());
+}
+
+function findNextInputMatch() {
+  const query = inputFind.value;
+  if (!query) {
+    updateInputFindState();
+    return;
+  }
+  const haystack = input.value.toLowerCase();
+  const needle = query.toLowerCase();
+  let index = haystack.indexOf(needle, input.selectionEnd || 0);
+  if (index < 0) index = haystack.indexOf(needle);
+  inputFindNext.disabled = index < 0;
+  if (index < 0) return;
+  input.focus();
+  input.setSelectionRange(index, index + query.length);
+  scrollTextareaOffsetIntoView(input, index);
+  scheduleCursorUi();
+}
+
+function scrollTextareaOffsetIntoView(textarea, offset) {
+  const lineNumber = textarea.value.slice(0, offset).split("\n").length;
+  const style = window.getComputedStyle(textarea);
+  const fontSize = Number.parseFloat(style.fontSize) || 13;
+  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.4;
+  const targetTop = Math.max(0, (lineNumber - 2) * lineHeight);
+  if (targetTop < textarea.scrollTop || targetTop > textarea.scrollTop + textarea.clientHeight - lineHeight * 2) {
+    textarea.scrollTop = targetTop;
+  }
+}
+
+function updateOutputFindState(options = {}) {
+  const query = outputFind.value;
+  const lines = outputRawLines();
+  const hasMatch = Boolean(query) && lines.some((line) => line.toLowerCase().includes(query.toLowerCase()));
+  outputFindNext.disabled = !hasMatch;
+  if (!hasMatch) {
+    outputFindLineIndex = -1;
+    clearActiveOutputFindLine();
+    return;
+  }
+  if (options.preserveLine && outputFindLineIndex >= 0) {
+    setActiveOutputFindLine(outputFindLineIndex, { scroll: false });
+  }
+}
+
+function findNextOutputMatch() {
+  const query = outputFind.value;
+  if (!query) {
+    updateOutputFindState();
+    return;
+  }
+  const lines = outputRawLines();
+  const needle = query.toLowerCase();
+  const start = outputFindLineIndex + 1;
+  let index = lines.findIndex((line, lineIndex) => lineIndex >= start && line.toLowerCase().includes(needle));
+  if (index < 0) index = lines.findIndex((line) => line.toLowerCase().includes(needle));
+  outputFindNext.disabled = index < 0;
+  if (index < 0) return;
+  setActiveOutputFindLine(index, { scroll: true });
+}
+
+function outputRawLines() {
+  return (output.dataset.rawText || output.textContent || "").split(/\r?\n/);
+}
+
+function clearActiveOutputFindLine() {
+  output.querySelector(".output-search-active")?.classList.remove("output-search-active");
+}
+
+function setActiveOutputFindLine(index, options = {}) {
+  clearActiveOutputFindLine();
+  outputFindLineIndex = index;
+  const line = output.querySelector(`[data-output-line="${index}"]`);
+  if (!line) return;
+  line.classList.add("output-search-active");
+  if (options.scroll) {
+    output.scrollTop = Math.max(0, line.offsetTop - output.clientHeight * 0.25);
+  }
+}
+
+function openTextFileFor(target) {
+  pendingFileTarget = target;
+  fileInput.click();
+}
+
+async function loadTextFileIntoTarget(target, text) {
+  if (target === "drops" || target === "encounters") {
+    const pane = trackerPanes[target];
+    pane.input.value = text;
+    if (target === "encounters") {
+      await hydrateEncounterSlidersFromDefaults();
+      syncEncounterSliderControlsToInput(pane);
+    }
+    saveWorkspaceCache();
+    await renderTracker(target);
+    return;
+  }
+
+  input.value = text;
+  moveCursorToFirstEncounter();
+  saveWorkspaceCache();
+  await renderCurrentInput();
+}
+
+function saveTrackerInput(tracker) {
+  const pane = trackerPanes[tracker];
+  const filename = tracker === "encounters" ? "encounters_input.txt" : "drops_input.txt";
+  downloadText(filename, pane.input.value);
+}
+
+const ALLY_OUTPUT_ACTORS = new Set([
+  "tidus", "yuna", "auron", "kimahri", "wakka", "lulu", "rikku",
+  "valefor", "ifrit", "ixion", "shiva", "bahamut", "yojimbo",
+  "cindy", "sandy", "mindy", "unknown",
+]);
+
+const NAMED_ENEMY_OUTPUT_ACTORS = new Set(["anima", "seymour"]);
+
+function renderOutputText(target, text, kind) {
+  target.dataset.rawText = text;
+  if (!text) {
+    target.textContent = "";
+    if (target === output) updateOutputFindState();
+    return;
+  }
+  target.innerHTML = text
+    .split("\n")
+    .map((line, index) => formatOutputLine(line, kind, index))
+    .join("\n");
+  if (target === output) updateOutputFindState({ preserveLine: true });
+}
+
+function formatOutputLine(line, kind, index) {
+  const className = outputLineClass(line, kind);
+  const highlighted = highlightOutputTokens(escapeHtml(line));
+  return `<span class="${className}" data-output-line="${index}">${highlighted}</span>`;
+}
+
+function outputLineClass(line, kind) {
+  const trimmed = line.trim();
+  const lower = trimmed.toLowerCase();
+  const firstToken = lower.split(/\s+/, 1)[0] || "";
+
+  if (!trimmed) return "output-line output-blank";
+  if (/^=+$/.test(trimmed)) return "output-line output-separator";
+  if (lower.startsWith("error:")) return "output-line output-error";
+  if (lower.startsWith("warning:")) return "output-line output-warning";
+  if (/^#=+.*=+$/.test(trimmed)) return "output-line output-section";
+  if (isEncounterOutputLine(trimmed, kind)) return "output-line output-encounter";
+  if (kind === "ctb") {
+    if (lower.startsWith("# party rolls:")) return "output-line output-party-roll-line";
+    if (
+      lower.startsWith("# enemy rolls:")
+      || /^m\d+\b/.test(lower)
+      || lower.startsWith("spawn ")
+      || NAMED_ENEMY_OUTPUT_ACTORS.has(firstToken)
+    ) {
+      return "output-line output-enemy";
+    }
+    if (ALLY_OUTPUT_ACTORS.has(firstToken)) return "output-line output-ally";
+  }
+  if (lower.startsWith("#")) return "output-line output-comment";
+  if (kind === "ctb" && isDropsResultLine(lower)) return "output-line output-drop";
+  if (lower.startsWith("no encounters search:") || lower.startsWith("route status:")) {
+    return "output-line output-search";
+  }
+  return "output-line";
+}
+
+function isEncounterOutputLine(trimmed, kind) {
+  if (/^(?:#\s*)?(?:random encounter:|simulated encounter:|multizone encounter:|encounter:)\s*\d+/i.test(trimmed)) {
+    return true;
+  }
+  if (kind !== "encounters") return false;
+  return /^\d+\s*\|/.test(trimmed) || /^\d+\s+\d+\s+\d+\s*\|/.test(trimmed);
+}
+
+function isDropsResultLine(lower) {
+  return lower.includes("drop") || lower.includes("steal") || lower.includes("equipment") || lower.includes("sphere");
+}
+
+function highlightOutputTokens(html) {
+  if (html.startsWith("# party rolls:")) {
+    return highlightRollComment(html, "party");
+  }
+  if (html.startsWith("# enemy rolls:")) {
+    return highlightRollComment(html, "enemy");
+  }
+  return html
+    .replace(/\(Crit\)/g, '<strong class="output-crit">(Crit)</strong>')
+    .replace(/\[CRIT\]/g, '<strong class="output-crit">[CRIT]</strong>')
+    .replace(/\[(?:[^\]\n]+)\]/g, (token) => (
+      token === "[CRIT]" ? token : `<span class="output-status-token">${token}</span>`
+    ))
+    .replace(/\bNo Encounters\b/g, '<strong class="output-nea">No Encounters</strong>');
+}
+
+function highlightRollComment(html, actorSide) {
+  const prefix = actorSide === "party" ? "# party rolls: " : "# enemy rolls: ";
+  const prefixClass = actorSide === "party" ? "output-party-roll-prefix" : "output-enemy-roll-prefix";
+  const targetClass = actorSide === "party" ? "output-party-roll-target" : "output-enemy-roll-target";
+  const tailClass = actorSide === "party" ? "output-enemy-health" : "output-player-health";
+  return `<span class="${prefixClass}">${prefix}</span>` + html.slice(prefix.length).split(" | ").map((part) => {
+    const match = part.match(/^([^:\n]+: )(\[[^\]\n]+\]\s+[^-\n]+?)(\s+-&gt;\s+.*)$/);
+    if (!match) return highlightOutputTokens(part);
+    return `<span class="${targetClass}">${match[1]}</span>`
+      + `<span class="output-damage-roll">${highlightDamageRollTokens(match[2])}</span>`
+      + `<span class="${tailClass}">${match[3]}</span>`;
+  }).join(" | ");
+}
+
+function highlightDamageRollTokens(html) {
+  return html
+    .replace(/\(Crit\)/g, '<strong class="output-crit">(Crit)</strong>')
+    .replace(/\[CRIT\]/g, '<strong class="output-crit">[CRIT]</strong>');
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function renderEncounterSliderControls(pane) {
@@ -223,11 +546,45 @@ function renderEncounterSliderControls(pane) {
       range.addEventListener("input", () => {
         value.textContent = range.value;
         pane.input.value = buildEncountersInputFromControls(pane);
+        saveWorkspaceCache();
+        scheduleTrackerRender("encounters");
       });
       label.replaceChildren(name, range, value);
       return label;
     });
   pane.sliders.replaceChildren(...controls);
+}
+
+async function hydrateEncounterSlidersFromDefaults() {
+  const pane = trackerPanes.encounters;
+  try {
+    const module = await loadWasm();
+    const seed = Number.parseInt(seedInput.value, 10) >>> 0;
+    const payload = JSON.parse(module.tracker_default_json("encounters", seed));
+    pane.sliderData = Array.isArray(payload.sliders) ? payload.sliders : [];
+    renderEncounterSliderControls(pane);
+    syncEncounterSliderControlsToInput(pane);
+  } catch (error) {
+    status.textContent = error?.message || String(error);
+  }
+}
+
+function syncEncounterSliderControlsToInput(pane) {
+  const lines = pane.input.value.split(/\r?\n/).map((line) => line.trim().toLowerCase());
+  const counts = new Map();
+  pane.sliderData.forEach((slider) => {
+    const expected = encounterInputLine(slider.name).toLowerCase();
+    const count = lines.filter((line) => line === expected).length;
+    counts.set(slider.index, Math.min(Math.max(count, slider.min), slider.max));
+  });
+  pane.sliders.querySelectorAll("input[type='range']").forEach((range) => {
+    const index = Number.parseInt(range.dataset.index, 10);
+    const value = counts.get(index);
+    if (value === undefined) return;
+    range.value = String(value);
+    const output = range.closest(".encounter-slider")?.querySelector("output");
+    if (output) output.textContent = String(value);
+  });
 }
 
 function buildEncountersInputFromControls(pane) {
@@ -467,16 +824,17 @@ function scanEncounters(text) {
 function updateEncounterControls(list) {
   const cursor = cursorLine();
   const current = currentEncounterAtLine(list, cursor);
-  currentEncounter.textContent = current ? `${current.index}. ${current.name}` : "None";
+  const currentPosition = currentEncounterPosition(list, current);
+  currentEncounter.textContent = current && currentPosition >= 0 ? `${currentPosition + 1}. ${current.name}` : "None";
   encounterSelect.replaceChildren(
-    ...list.map((encounter) => {
+    ...list.map((encounter, position) => {
       const option = document.createElement("option");
-      option.value = String(encounter.index);
-      option.textContent = `${encounter.index}. ${encounter.name}`;
+      option.value = String(position);
+      option.textContent = `${position + 1}. ${encounter.name}`;
       return option;
     })
   );
-  if (current) encounterSelect.value = String(current.index);
+  if (currentPosition >= 0) encounterSelect.value = String(currentPosition);
   prevEncounterButton.disabled = !list.length;
   nextEncounterButton.disabled = !list.length;
 }
@@ -489,16 +847,59 @@ function jumpRelativeEncounter(delta) {
   const list = encounterList();
   if (!list.length) return;
   const current = currentEncounterAtLine(list, cursorLine());
-  const currentPosition = current ? list.findIndex((encounter) => encounter.index === current.index) : 0;
+  const currentPosition = currentEncounterPosition(list, current);
   const nextPosition = Math.min(Math.max(currentPosition + delta, 0), list.length - 1);
-  jumpToLine(list[nextPosition].start_line);
+  jumpToEncounter(list[nextPosition], nextPosition);
+}
+
+function currentEncounterPosition(list, current) {
+  if (!current) return -1;
+  return list.findIndex((encounter) => encounter.start_line === current.start_line);
+}
+
+function jumpToEncounter(encounter, position) {
+  jumpToLine(encounter.start_line);
+  scrollOutputToEncounterPosition(position);
 }
 
 function jumpToLine(lineNumber) {
   const offset = lineStartOffset(input.value, lineNumber);
   input.focus();
   input.selectionStart = input.selectionEnd = offset;
+  scrollInputLineToTop(lineNumber);
   updateCursorUi();
+}
+
+function moveCursorToFirstEncounter() {
+  const firstEncounter = scanEncounters(input.value)[0];
+  const lineNumber = firstEncounter?.start_line || 1;
+  const offset = lineStartOffset(input.value, lineNumber);
+  input.selectionStart = input.selectionEnd = offset;
+  scrollInputLineToTop(lineNumber);
+}
+
+function scrollInputLineToTop(lineNumber) {
+  const style = window.getComputedStyle(input);
+  const fontSize = Number.parseFloat(style.fontSize) || 13;
+  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.4;
+  input.scrollTop = Math.max(0, (lineNumber - 1) * lineHeight);
+}
+
+function scrollOutputToEncounterPosition(encounterPosition) {
+  const lines = (output.textContent || "").split(/\r?\n/);
+  let seen = -1;
+  const outputLineIndex = lines.findIndex((line) => {
+    if (!/^(?:#\s*)?(?:Random Encounter:|Simulated Encounter:|Multizone encounter:|Encounter:)\s*\d+/i.test(line)) {
+      return false;
+    }
+    seen += 1;
+    return seen === encounterPosition;
+  });
+  if (outputLineIndex < 0) return;
+  const style = window.getComputedStyle(output);
+  const fontSize = Number.parseFloat(style.fontSize) || 13;
+  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.4;
+  output.scrollTop = Math.max(0, outputLineIndex * lineHeight - lineHeight - 10);
 }
 
 function lineStartOffset(text, lineNumber) {
@@ -614,6 +1015,46 @@ function replaceLineRange(startLine, endLine, text) {
   input.selectionStart = input.selectionEnd = startOffset + insertion.length;
 }
 
+function setupResizeHandles() {
+  document.querySelectorAll(".main-resize").forEach((handle) => {
+    handle.addEventListener("pointerdown", (event) => startSplitResize(event, handle.closest(".workspace"), "--input-column", "--input-row"));
+  });
+  document.querySelectorAll(".tracker-resize").forEach((handle) => {
+    handle.addEventListener("pointerdown", (event) => startSplitResize(event, handle.closest(".tracker-body"), "--tracker-input-column", "--input-row"));
+  });
+}
+
+function startSplitResize(event, container, columnVar, rowVar) {
+  if (!container) return;
+  event.preventDefault();
+  const handle = event.currentTarget;
+  handle.setPointerCapture?.(event.pointerId);
+  const onMove = (moveEvent) => {
+    const rect = container.getBoundingClientRect();
+    const stacked = window.matchMedia("(max-width: 920px)").matches;
+    if (stacked) {
+      const percent = clamp(((moveEvent.clientY - rect.top) / rect.height) * 100, 24, 76);
+      container.style.setProperty(rowVar, `${percent.toFixed(1)}%`);
+    } else {
+      const percent = clamp(((moveEvent.clientX - rect.left) / rect.width) * 100, 22, 72);
+      container.style.setProperty(columnVar, `${percent.toFixed(1)}%`);
+    }
+    saveWorkspaceCache();
+  };
+  const onUp = () => {
+    handle.releasePointerCapture?.(event.pointerId);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  onMove(event);
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
 function downloadText(filename, text) {
   const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -624,4 +1065,91 @@ function downloadText(filename, text) {
   URL.revokeObjectURL(url);
 }
 
-loadSample();
+function saveWorkspaceCache() {
+  try {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({
+      seed: seedInput.value,
+      ctbInput: input.value,
+      dropsInput: trackerPanes.drops.input.value,
+      encountersInput: trackerPanes.encounters.input.value,
+      layout: currentLayoutState(),
+    }));
+  } catch {
+    // Storage can be unavailable in private/file contexts; keep the editor usable.
+  }
+}
+
+function restoreWorkspaceCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY) || "null");
+    if (!cached || typeof cached !== "object") return false;
+    seedInput.value = cached.seed || seedInput.value;
+    input.value = typeof cached.ctbInput === "string" ? cached.ctbInput : input.value;
+    trackerPanes.drops.input.value = typeof cached.dropsInput === "string" ? cached.dropsInput : "";
+    trackerPanes.encounters.input.value = typeof cached.encountersInput === "string" ? cached.encountersInput : "";
+    restoreLayoutState(cached.layout);
+    moveCursorToFirstEncounter();
+    return Boolean(input.value || trackerPanes.drops.input.value || trackerPanes.encounters.input.value);
+  } catch {
+    return false;
+  }
+}
+
+function currentLayoutState() {
+  const workspace = document.querySelector(".workspace");
+  const trackerBodies = Object.fromEntries(
+    Object.entries(trackerPanes).map(([name, pane]) => {
+      const body = pane.input.closest(".tracker-body");
+      return [name, {
+        trackerInputColumn: body?.style.getPropertyValue("--tracker-input-column") || "",
+        inputRow: body?.style.getPropertyValue("--input-row") || "",
+      }];
+    })
+  );
+  return {
+    activeModes: [...activeModes],
+    workspace: {
+      inputColumn: workspace?.style.getPropertyValue("--input-column") || "",
+      inputRow: workspace?.style.getPropertyValue("--input-row") || "",
+    },
+    trackerBodies,
+  };
+}
+
+function restoreLayoutState(layout) {
+  if (!layout || typeof layout !== "object") return;
+  const restoredModes = Array.isArray(layout.activeModes)
+    ? layout.activeModes.filter((mode) => ["ctb", "drops", "encounters"].includes(mode))
+    : [];
+  if (restoredModes.length) activeModes = new Set(restoredModes);
+  const workspace = document.querySelector(".workspace");
+  if (workspace && layout.workspace) {
+    setOptionalStyleProperty(workspace, "--input-column", layout.workspace.inputColumn);
+    setOptionalStyleProperty(workspace, "--input-row", layout.workspace.inputRow);
+  }
+  for (const [name, pane] of Object.entries(trackerPanes)) {
+    const body = pane.input.closest(".tracker-body");
+    const bodyState = layout.trackerBodies?.[name];
+    if (!body || !bodyState) continue;
+    setOptionalStyleProperty(body, "--tracker-input-column", bodyState.trackerInputColumn);
+    setOptionalStyleProperty(body, "--input-row", bodyState.inputRow);
+  }
+  updateVisibleModes();
+}
+
+function setOptionalStyleProperty(element, property, value) {
+  if (typeof value === "string" && value) element.style.setProperty(property, value);
+}
+
+async function initializeWorkspace() {
+  if (restoreWorkspaceCache()) {
+    if (trackerPanes.encounters.input.value) await hydrateEncounterSlidersFromDefaults();
+    await renderCurrentInput();
+    if (trackerPanes.drops.input.value) await renderTracker("drops");
+    if (trackerPanes.encounters.input.value) await renderTracker("encounters");
+    return;
+  }
+  await loadSample();
+}
+
+initializeWorkspace();

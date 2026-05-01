@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <main class="app-shell" data-mode="ctb">
+    <main class="app-shell">
       <header class="topbar">
         <div class="brand">
           <div class="mark">CTB</div>
@@ -16,10 +16,10 @@
             <p id="status">Load the WASM package with <code>wasm-pack build --target web</code>.</p>
           </div>
         </div>
-        <nav class="mode-tabs" aria-label="Tracker mode">
-          <button class="mode-tab is-active" type="button" data-mode="ctb">CTB</button>
-          <button class="mode-tab" type="button" data-mode="drops">Drops</button>
-          <button class="mode-tab" type="button" data-mode="encounters">Encounters</button>
+        <nav class="mode-tabs" aria-label="Visible panes">
+          <button class="mode-tab is-active" type="button" data-mode="ctb" aria-pressed="true">CTB</button>
+          <button class="mode-tab" type="button" data-mode="drops" aria-pressed="false">Drops</button>
+          <button class="mode-tab" type="button" data-mode="encounters" aria-pressed="false">Encounters</button>
         </nav>
         <div class="top-controls">
           <label class="field seed-field">
@@ -30,12 +30,11 @@
           <button id="saveInput" type="button">Save Input</button>
           <button id="saveOutput" type="button">Save Output</button>
           <button id="sample" type="button">Load Sample</button>
-          <button id="render" type="button">Render CTB</button>
-          <input id="fileInput" type="file" accept=".txt,text/plain">
+          <input id="fileInput" type="file" accept=".txt,.csv,text/plain,text/csv">
         </div>
       </header>
 
-      <section class="workspace" data-mode-panel="ctb">
+      <section class="workspace is-visible" data-mode-panel="ctb">
         <section class="input-side" aria-label="CTB input">
           <div class="panel-head">
             <label class="field search-field">
@@ -45,7 +44,7 @@
             <button id="inputFindNext" type="button" disabled>Next</button>
           </div>
           <textarea id="input" spellcheck="false">encounter tanker
-status atb
+atb
 tidus attack m1</textarea>
           <aside class="tools">
             <div class="encounter-row">
@@ -78,7 +77,6 @@ tidus attack m1</textarea>
             </label>
             <button id="outputFindNext" type="button" disabled>Next</button>
           </div>
-          <div id="summary" class="summary">Ready</div>
           <pre id="output" aria-live="polite"></pre>
         </section>
       </section>
@@ -91,15 +89,16 @@ tidus attack m1</textarea>
               <h2>Drops</h2>
             </div>
             <div class="tracker-actions">
-              <button id="loadDrops" type="button">Load Defaults</button>
-              <button id="renderDrops" type="button">Render Drops</button>
+              <button id="openDrops" type="button">Open Input</button>
+              <button id="saveDrops" type="button">Save Input</button>
+              <button id="loadDrops" type="button">Load Sample</button>
               <button id="searchNoEncounters" type="button">No Encounters</button>
             </div>
           </div>
           <div class="tracker-body">
             <textarea id="dropsInput" spellcheck="false" aria-label="Drops input"></textarea>
+            <div class="resize-handle tracker-resize" role="separator" aria-orientation="vertical"></div>
             <section class="tracker-output">
-              <div id="dropsSummary" class="tracker-summary">Not loaded</div>
               <pre id="dropsOutput"></pre>
             </section>
           </div>
@@ -114,8 +113,9 @@ tidus attack m1</textarea>
               <h2>Encounters</h2>
             </div>
             <div class="tracker-actions">
-              <button id="loadEncountersTracker" type="button">Load Defaults</button>
-              <button id="renderEncountersTracker" type="button">Render Encounters</button>
+              <button id="openEncountersTracker" type="button">Open Input</button>
+              <button id="saveEncountersTracker" type="button">Save Input</button>
+              <button id="loadEncountersTracker" type="button">Load Sample</button>
             </div>
           </div>
           <div class="tracker-body encounters-tracker-body">
@@ -123,14 +123,14 @@ tidus attack m1</textarea>
               <div id="encounterSliders" class="encounter-sliders"></div>
               <textarea id="encountersTrackerInput" spellcheck="false" aria-label="Encounters tracker input"></textarea>
             </section>
+            <div class="resize-handle tracker-resize" role="separator" aria-orientation="vertical"></div>
             <section class="tracker-output">
-              <div id="encountersTrackerSummary" class="tracker-summary">Not loaded</div>
               <pre id="encountersTrackerOutput"></pre>
             </section>
           </div>
         </section>
       </section>
     </main>
-    <script type="module" src="main.js"></script>
+    <script type="module" src="main.js?v=ctb-tracker-render-20260501-262"></script>
   </body>
 </html>

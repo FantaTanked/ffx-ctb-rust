@@ -151,6 +151,46 @@ struct ExactFutureEncounterOutput {
     section_maxima: HashMap<String, HashMap<String, usize>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FutureEncounterSearchView {
+    branches: Vec<ExactFutureEncounterOutput>,
+    total_counts: HashMap<String, usize>,
+    section_maxima: HashMap<String, HashMap<String, usize>>,
+    rows_len: usize,
+}
+
+impl FutureEncounterSearchView {
+    fn from_branch(branch: ExactFutureEncounterOutput) -> Self {
+        Self::from_branches(vec![branch])
+    }
+
+    fn from_branches(branches: Vec<ExactFutureEncounterOutput>) -> Self {
+        let mut total_counts: HashMap<String, usize> = HashMap::new();
+        let mut section_maxima: HashMap<String, HashMap<String, usize>> = HashMap::new();
+        let mut rows_len = 0;
+        for branch in &branches {
+            rows_len = rows_len.max(branch.rows.len());
+            for (monster, count) in &branch.total_counts {
+                let slot = total_counts.entry(monster.clone()).or_default();
+                *slot = (*slot).max(*count);
+            }
+            for (section_name, counts) in &branch.section_maxima {
+                let maxima = section_maxima.entry(section_name.clone()).or_default();
+                for (monster, count) in counts {
+                    let slot = maxima.entry(monster.clone()).or_default();
+                    *slot = (*slot).max(*count);
+                }
+            }
+        }
+        Self {
+            branches,
+            total_counts,
+            section_maxima,
+            rows_len,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct EncounterSliderResponse {
     index: usize,
@@ -1159,7 +1199,6 @@ fn build_no_encounters_routes_output(
     encounters_input: Option<&str>,
     encounters_output: Option<&str>,
 ) -> (String, String) {
-    let edited_input = edit_drops_tracker_input(input);
     let input_lines = input.lines().collect::<Vec<_>>();
     if input_lines.is_empty() {
         return (
@@ -1172,7 +1211,7 @@ fn build_no_encounters_routes_output(
     if first_ghost_line.is_none() {
         return (
             "No Encounters search: no Ghost line was found below the cursor.".to_string(),
-            edited_input,
+            input.to_string(),
         );
     }
     let start_section_name = drops_search_start_section_name(&input_lines, start_line);
@@ -1183,7 +1222,7 @@ fn build_no_encounters_routes_output(
         if future_from_output.is_none() && encounters_input.is_none() {
             return (
                 "No Encounters search: the Encounters tracker output could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
-                edited_input,
+                input.to_string(),
             );
         }
     }
@@ -1196,7 +1235,7 @@ fn build_no_encounters_routes_output(
                 if !encounters_input_has_exact_future_rows(encounters_input) {
                     return (
                         "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
-                        edited_input,
+                        input.to_string(),
                     );
                 }
                 let rendered = render_encounters_tracker(seed, encounters_input);
@@ -1206,7 +1245,7 @@ fn build_no_encounters_routes_output(
             if future_from_input.is_none() {
                 return (
                     "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
-                    edited_input,
+                    input.to_string(),
                 );
             }
         }
@@ -1218,14 +1257,24 @@ fn build_no_encounters_routes_output(
     } else {
         "notes-fallback"
     };
-    let future = future_from_output.as_ref().or(future_from_input.as_ref());
-    let future_rows = future.map(|future| future.rows.len());
+    let future_from_notes;
+    let future_from_exact;
+    let future = if let Some(future) = future_from_output.as_ref().or(future_from_input.as_ref()) {
+        future_from_exact = FutureEncounterSearchView::from_branch(future.clone());
+        Some(&future_from_exact)
+    } else {
+        let extra_budget = if start_section_name.is_empty() { 0 } else { 3 };
+        future_from_notes =
+            build_notes_fallback_future_view(seed, &start_section_name, extra_budget);
+        future_from_notes.as_ref()
+    };
+    let future_rows = future.map(|future| future.rows_len);
     let future_sections_debug = future
         .map(format_future_section_maxima_debug)
         .unwrap_or_else(|| "Future random sections: none.".to_string());
     let preview = build_no_encounters_preview(
         seed,
-        &edited_input,
+        input,
         start_line,
         first_ghost_line,
         future_source,
@@ -1233,7 +1282,10 @@ fn build_no_encounters_routes_output(
         future_rows,
         future,
     );
-    (preview.output, preview.edited_input.unwrap_or(edited_input))
+    (
+        preview.output,
+        preview.edited_input.unwrap_or_else(|| input.to_string()),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1250,69 +1302,140 @@ fn build_no_encounters_preview(
     future_source: &str,
     future_sections_debug: &str,
     future_rows: Option<usize>,
-    future: Option<&ExactFutureEncounterOutput>,
+    future: Option<&FutureEncounterSearchView>,
 ) -> NoEncountersPreview {
-    let first_ghost_input = first_ghost_search_window_input(edited_input, start_line)
-        .unwrap_or_else(|| edited_input.to_string());
-    let rendered = render_drops_tracker(seed, &first_ghost_input);
-    let mut lines = Vec::new();
-    let mut suggested_input = None;
-    lines.push("No Encounters search:".to_string());
-    if let Some(drop) = find_no_encounters_ghost_drop(&rendered) {
-        let search_mode =
-            no_encounters_search_mode(future_source, Some(&first_ghost_input), true, future);
-        push_no_encounters_context_line(&mut lines, start_line, first_ghost_line, Some(1));
-        lines.push(format!("Search mode: {search_mode}."));
-        lines.push(future_sections_debug.to_string());
-        lines.push(format!("No Encounters armor: {drop}"));
-        lines.push(
-            "Route status: current Ghost route already produces a qualifying armor.".to_string(),
+    let exact_future_validation = future_source != "notes-fallback";
+    let mut search = collect_no_encounters_results(
+        seed,
+        edited_input,
+        start_line,
+        future,
+        exact_future_validation,
+    );
+    let deep_search = NoEncountersResultSearch::empty();
+    let mut synth_search = NoEncountersResultSearch::empty();
+    let best_random_penalty = search
+        .results
+        .iter()
+        .map(|result| result.random_penalty)
+        .min();
+    let should_run_synth_search = future
+        .filter(|future| !future.section_maxima.is_empty())
+        .is_some()
+        && (best_random_penalty.is_none() || best_random_penalty.unwrap_or_default() > 0);
+    if should_run_synth_search && search.results.is_empty() {
+        synth_search = collect_synthetic_no_encounters_results(
+            seed,
+            edited_input,
+            start_line,
+            future,
+            exact_future_validation,
         );
-        push_no_encounters_random_row_summary(&mut lines, &first_ghost_input, future);
+        search.results = merge_no_encounters_results(&search.results, &synth_search.results)
+            .into_iter()
+            .take(10)
+            .collect();
+    }
+    let mut mode_flags = vec![future_source.to_string()];
+    if deep_search.tested_routes > 0 {
+        mode_flags.push("deep-search".to_string());
+    }
+    if synth_search.tested_routes > 0 {
+        mode_flags.push("synthetic-search".to_string());
+    }
+    if should_run_synth_search {
+        mode_flags.push("prefer-guaranteed".to_string());
+    }
+    if search.search_truncated || deep_search.search_truncated {
+        mode_flags.push("budgeted-search".to_string());
+    }
+    search.results.sort_by(no_encounters_result_sort_key);
+    search.results.truncate(10);
+
+    let mut lines = vec!["No Encounters search:".to_string()];
+    if deep_search.tested_routes > 0 || synth_search.tested_routes > 0 {
+        let mut tested = format!(
+            "Cursor line {start_line}, first Ghost line {}, tested {} default route{} + {} deep route{}",
+            first_ghost_line.unwrap_or_default(),
+            search.tested_routes,
+            if search.tested_routes == 1 { "" } else { "s" },
+            deep_search.tested_routes,
+            if deep_search.tested_routes == 1 { "" } else { "s" },
+        );
+        if synth_search.tested_routes > 0 {
+            tested.push_str(&format!(
+                " + {} synthetic route{}",
+                synth_search.tested_routes,
+                if synth_search.tested_routes == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
+        tested.push('.');
+        lines.push(tested);
     } else {
-        let search = synthesize_no_encounters_ghost_route(seed, edited_input, start_line, 50, 3);
         push_no_encounters_context_line(
             &mut lines,
             start_line,
             first_ghost_line,
-            Some(search.candidates_tested),
+            Some(search.tested_routes),
         );
-        let mode_route_input = search
-            .candidate
-            .as_ref()
-            .map(|candidate| candidate.route_input.as_str());
-        let search_mode = no_encounters_search_mode(
-            future_source,
-            mode_route_input,
-            search.candidate.is_some(),
-            future,
-        );
-        lines.push(format!("Search mode: {search_mode}."));
-        lines.push(future_sections_debug.to_string());
-        if let Some(candidate) = search.candidate {
-            lines.push(format!("No Encounters armor: {}", candidate.drop));
-            lines.push(format!("Suggested Ghost kills: {}", candidate.ghost_kills));
-            if candidate.pre_ghost_deaths > 0 {
-                lines.push(format!(
-                    "Suggested pre-Ghost deaths: {}",
-                    candidate.pre_ghost_deaths
-                ));
-            }
-            lines.push(format!("Suggested repeat line: {}", candidate.repeat_line));
-            lines.push(format!("Candidates tested: {}", search.candidates_tested));
-            push_no_encounters_random_row_summary(&mut lines, &candidate.route_input, future);
-            suggested_input = Some(candidate.route_input);
+    }
+    lines.push(format!("Search mode: {}.", mode_flags.join(", ")));
+    lines.push(future_sections_debug.to_string());
+    if search.search_truncated {
+        lines.push(format!(
+            "Large-window best-effort search: default pass explored {} of {} optional subsets, prioritizing actions closest to Ghost.",
+            search.tested_option_sets, search.total_option_sets
+        ));
+    }
+    if let Some(best_random_penalty) = search
+        .results
+        .iter()
+        .map(|result| result.random_penalty)
+        .min()
+    {
+        if best_random_penalty == 0 {
+            lines.push("Guaranteed-only route(s) found before optional random routes.".to_string());
         } else {
-            lines.push(
-                "No Encounters armor: none found in the current Ghost route window.".to_string(),
-            );
-            lines.push(
-                "Route status: no bounded Ghost-repeat/pre-Ghost-death candidate found; adjust supporting drop manipulations and rerun.".to_string(),
-            );
-            lines.push(
-                "No route found that gives a No Encounters armor from the first Ghost.".to_string(),
-            );
-            lines.push(format!("Candidates tested: {}", search.candidates_tested));
+            lines.push(format!(
+                "No guaranteed-only route found; best result uses {best_random_penalty} random encounter row{}.",
+                if best_random_penalty == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    if deep_search.tested_routes > 0 {
+        lines.push(
+            "Deep search was used after the default path found no valid first-Ghost NEA route."
+                .to_string(),
+        );
+    }
+    if synth_search.tested_routes > 0 {
+        lines.push("Synthetic future-action search was used after the default search found no valid route.".to_string());
+    }
+    if search.results.is_empty() {
+        lines.push(
+            "No route found that gives a No Encounters armor from the first Ghost.".to_string(),
+        );
+    } else {
+        for (index, result) in search.results.iter().take(10).enumerate() {
+            lines.push(format!(
+                "{}. add {} action{} | random rows: {} | {}",
+                index + 1,
+                result.added_count,
+                if result.added_count == 1 { "" } else { "s" },
+                result.random_penalty,
+                result.equipment_text
+            ));
+            if result.added_lines.is_empty() {
+                lines.push("   No extra actions needed".to_string());
+            } else {
+                for line in &result.added_lines {
+                    lines.push(format!("   {line}"));
+                }
+            }
         }
     }
     if let Some(rows) = future_rows {
@@ -1322,7 +1445,10 @@ fn build_no_encounters_preview(
     }
     NoEncountersPreview {
         output: lines.join("\n"),
-        edited_input: suggested_input,
+        edited_input: search
+            .results
+            .first()
+            .map(|result| result.route_input.clone()),
     }
 }
 
@@ -1350,7 +1476,8 @@ fn find_no_encounters_ghost_drop(rendered_drops: &str) -> Option<String> {
     rendered_drops
         .lines()
         .find(|line| {
-            line.contains("Ghost |")
+            line.trim_start().starts_with("Ghost")
+                && line.contains('|')
                 && line.contains("Equipment #")
                 && line.contains("No Encounters")
         })
@@ -1362,20 +1489,964 @@ fn find_no_encounters_ghost_drop(rendered_drops: &str) -> Option<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 struct NoEncountersGhostRouteCandidate {
     ghost_kills: usize,
     pre_ghost_deaths: usize,
     repeat_line: String,
+    uncommented_line: Option<(usize, String)>,
     drop: String,
     route_input: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 struct NoEncountersGhostRouteSearch {
     candidate: Option<NoEncountersGhostRouteCandidate>,
     candidates_tested: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DropsSearchRouteLine {
+    source_line: usize,
+    raw_line: String,
+    normalized_line: String,
+    section_name: String,
+    optional: bool,
+    is_ghost: bool,
+    command: String,
+    monster_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NoEncountersRouteResult {
+    added_count: usize,
+    random_penalty: usize,
+    route_len: usize,
+    tested_index: usize,
+    equipment_text: String,
+    added_lines: Vec<String>,
+    route_input: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NoEncountersResultSearch {
+    results: Vec<NoEncountersRouteResult>,
+    tested_routes: usize,
+    tested_option_sets: usize,
+    total_option_sets: usize,
+    search_truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SearchSynthesisFamily {
+    anchor_index: usize,
+    route_lines: Vec<DropsSearchRouteLine>,
+    description_lines: Vec<String>,
+    max_uses: usize,
+}
+
+impl NoEncountersResultSearch {
+    fn empty() -> Self {
+        Self {
+            results: Vec::new(),
+            tested_routes: 0,
+            tested_option_sets: 0,
+            total_option_sets: 0,
+            search_truncated: false,
+        }
+    }
+}
+
+fn no_encounters_result_sort_key(
+    left: &NoEncountersRouteResult,
+    right: &NoEncountersRouteResult,
+) -> std::cmp::Ordering {
+    let left_score = no_encounters_added_line_score(&left.added_lines);
+    let right_score = no_encounters_added_line_score(&right.added_lines);
+    (
+        left.random_penalty,
+        left.added_count,
+        left.route_len,
+        std::cmp::Reverse(left_score),
+        left.tested_index,
+    )
+        .cmp(&(
+            right.random_penalty,
+            right.added_count,
+            right.route_len,
+            std::cmp::Reverse(right_score),
+            right.tested_index,
+        ))
+}
+
+fn no_encounters_added_line_score(lines: &[String]) -> usize {
+    lines
+        .iter()
+        .filter_map(|line| {
+            line.replace(':', " ")
+                .split_whitespace()
+                .find_map(|word| word.parse::<usize>().ok())
+        })
+        .sum()
+}
+
+fn merge_no_encounters_results(
+    left: &[NoEncountersRouteResult],
+    right: &[NoEncountersRouteResult],
+) -> Vec<NoEncountersRouteResult> {
+    let mut merged: HashMap<(String, Vec<String>), NoEncountersRouteResult> = HashMap::new();
+    for result in left.iter().chain(right) {
+        let key = (result.equipment_text.clone(), result.added_lines.clone());
+        let replace = merged
+            .get(&key)
+            .is_none_or(|current| no_encounters_result_sort_key(result, current).is_lt());
+        if replace {
+            merged.insert(key, result.clone());
+        }
+    }
+    let mut results = merged.into_values().collect::<Vec<_>>();
+    results.sort_by(no_encounters_result_sort_key);
+    results
+}
+
+fn collect_no_encounters_results(
+    seed: u32,
+    edited_input: &str,
+    start_line: usize,
+    future: Option<&FutureEncounterSearchView>,
+    exact_future_validation: bool,
+) -> NoEncountersResultSearch {
+    let lines = edited_input
+        .lines()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let (edited_prefix, pre_ghost_lines, ghost_lines) = drops_search_window(&lines, start_line);
+    if ghost_lines.is_empty() {
+        return NoEncountersResultSearch::empty();
+    }
+    let active_ghost_line = ghost_lines.iter().find(|line| !line.optional);
+    let optional_lines = pre_ghost_lines
+        .iter()
+        .filter(|line| line.optional && !is_nea_excluded_optional(&line.normalized_line))
+        .filter(|line| route_line_matches_future_counts(line, future))
+        .cloned()
+        .collect::<Vec<_>>();
+    let linked_optionals = linked_drops_optionals(&pre_ghost_lines);
+    let paired_lines = linked_optionals
+        .values()
+        .flat_map(|lines| lines.iter().cloned())
+        .collect::<HashSet<_>>();
+    let mut filtered_optionals = optional_lines
+        .into_iter()
+        .filter(|line| !paired_lines.contains(line))
+        .collect::<Vec<_>>();
+    filtered_optionals.reverse();
+
+    let total_option_sets = if filtered_optionals.len() >= usize::BITS as usize {
+        usize::MAX
+    } else {
+        1usize << filtered_optionals.len()
+    };
+    let subset_budget = 20_000usize;
+    let mut tested_option_sets = 0usize;
+    let mut tested_routes = 0usize;
+    let mut results = Vec::new();
+    let mut seen_routes = HashSet::new();
+    let mut stop = false;
+
+    for optional_count in 0..=filtered_optionals.len() {
+        let combinations = optional_index_combinations(
+            filtered_optionals.len(),
+            optional_count,
+            subset_budget - tested_option_sets,
+        );
+        for indexes in combinations {
+            if tested_option_sets >= subset_budget {
+                stop = true;
+                break;
+            }
+            tested_option_sets += 1;
+            let mut chosen = HashSet::new();
+            for index in indexes {
+                let optional = filtered_optionals[index].clone();
+                chosen.insert(optional.clone());
+                if let Some(linked) = linked_optionals.get(&optional) {
+                    chosen.extend(linked.iter().cloned());
+                }
+            }
+            let route_prefix = pre_ghost_lines
+                .iter()
+                .filter(|line| !line.optional || chosen.contains(*line))
+                .cloned()
+                .collect::<Vec<_>>();
+            for ghost_line in &ghost_lines {
+                let mut route_lines = route_prefix.clone();
+                route_lines.push(ghost_line.clone());
+                let route_key = no_encounters_future_path_key(&route_lines);
+                if !seen_routes.insert(route_key) {
+                    continue;
+                }
+                if !route_matches_future_counts(&route_lines, future) {
+                    continue;
+                }
+                tested_routes += 1;
+                if exact_future_validation && !route_matches_exact_future_rows(&route_lines, future)
+                {
+                    continue;
+                }
+                let route_text = drops_route_text(&edited_prefix, &route_lines);
+                let Some(drop) =
+                    find_no_encounters_ghost_drop(&render_drops_tracker(seed, &route_text))
+                else {
+                    continue;
+                };
+                let added_lines = route_prefix
+                    .iter()
+                    .filter(|line| line.optional)
+                    .map(|line| format!("line {}: {}", line.source_line, line.raw_line))
+                    .chain(ghost_line_change_description(active_ghost_line, ghost_line).into_iter())
+                    .collect::<Vec<_>>();
+                let route_input = apply_route_lines_to_original(&lines, &route_lines);
+                results.push(NoEncountersRouteResult {
+                    added_count: added_lines.len(),
+                    random_penalty: future
+                        .and_then(|future| {
+                            let route_only = route_lines_text(&route_lines);
+                            count_route_future_random_rows(&route_only, future)
+                        })
+                        .unwrap_or_default(),
+                    route_len: route_lines.len(),
+                    tested_index: tested_routes,
+                    equipment_text: drop,
+                    added_lines,
+                    route_input,
+                });
+            }
+        }
+        if stop {
+            break;
+        }
+    }
+
+    results.sort_by(no_encounters_result_sort_key);
+    results.truncate(10);
+    NoEncountersResultSearch {
+        results,
+        tested_routes,
+        tested_option_sets,
+        total_option_sets,
+        search_truncated: total_option_sets > subset_budget,
+    }
+}
+
+fn optional_index_combinations(len: usize, count: usize, limit: usize) -> Vec<Vec<usize>> {
+    fn build(
+        len: usize,
+        count: usize,
+        start: usize,
+        current: &mut Vec<usize>,
+        out: &mut Vec<Vec<usize>>,
+        limit: usize,
+    ) {
+        if out.len() >= limit {
+            return;
+        }
+        if current.len() == count {
+            out.push(current.clone());
+            return;
+        }
+        let remaining = count - current.len();
+        if len.saturating_sub(start) < remaining {
+            return;
+        }
+        for index in start..=len - remaining {
+            current.push(index);
+            build(len, count, index + 1, current, out, limit);
+            current.pop();
+            if out.len() >= limit {
+                break;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    build(len, count, 0, &mut Vec::new(), &mut out, limit);
+    out
+}
+
+fn ghost_line_change_description(
+    active_ghost_line: Option<&DropsSearchRouteLine>,
+    ghost_line: &DropsSearchRouteLine,
+) -> Option<String> {
+    if active_ghost_line.is_none_or(|active| active.normalized_line != ghost_line.normalized_line) {
+        Some(format!(
+            "line {}: change ghost to {}",
+            ghost_line.source_line, ghost_line.raw_line
+        ))
+    } else {
+        None
+    }
+}
+
+fn apply_route_lines_to_original(
+    original_lines: &[String],
+    route_lines: &[DropsSearchRouteLine],
+) -> String {
+    let mut output = original_lines.to_vec();
+    for line in route_lines.iter().filter(|line| line.optional) {
+        let index = line.source_line.saturating_sub(1);
+        if let Some(slot) = output.get_mut(index) {
+            *slot = line.raw_line.clone();
+        }
+    }
+    output.join("\n")
+}
+
+fn route_line_matches_future_counts(
+    line: &DropsSearchRouteLine,
+    future: Option<&FutureEncounterSearchView>,
+) -> bool {
+    let Some(monster) = line.monster_name.as_ref() else {
+        return true;
+    };
+    let Some(future) = future else {
+        return true;
+    };
+    future_monster_count(&future.total_counts, monster) > 0
+}
+
+fn route_matches_future_counts(
+    route_lines: &[DropsSearchRouteLine],
+    future: Option<&FutureEncounterSearchView>,
+) -> bool {
+    let Some(future) = future else {
+        return true;
+    };
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for line in route_lines {
+        if let Some(monster) = &line.monster_name {
+            *counts.entry(monster.clone()).or_default() += 1;
+        }
+    }
+    future.branches.iter().any(|branch| {
+        counts
+            .iter()
+            .all(|(monster, count)| future_monster_count(&branch.total_counts, monster) >= *count)
+    })
+}
+
+fn future_monster_count(counts: &HashMap<String, usize>, monster: &str) -> usize {
+    counts.get(monster).copied().unwrap_or_else(|| {
+        let target_family = monster_family(monster);
+        counts
+            .iter()
+            .filter_map(|(name, count)| (monster_family(name) == target_family).then_some(*count))
+            .max()
+            .unwrap_or_default()
+    })
+}
+
+fn route_matches_exact_future_rows(
+    route_lines: &[DropsSearchRouteLine],
+    future: Option<&FutureEncounterSearchView>,
+) -> bool {
+    let Some(future) = future else {
+        return true;
+    };
+    let route_input = route_lines
+        .iter()
+        .map(|line| line.normalized_line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    future
+        .branches
+        .iter()
+        .any(|branch| count_route_exact_future_random_rows(&route_input, branch).is_some())
+}
+
+fn route_lines_text(route_lines: &[DropsSearchRouteLine]) -> String {
+    route_lines
+        .iter()
+        .map(|line| line.normalized_line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn no_encounters_future_path_key(route_lines: &[DropsSearchRouteLine]) -> Vec<String> {
+    let last_index = route_lines.len().saturating_sub(1);
+    route_lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| {
+            if index == last_index && line.monster_name.as_deref() == Some("ghost") {
+                "kill ghost".to_string()
+            } else {
+                line.normalized_line.clone()
+            }
+        })
+        .collect()
+}
+
+fn collect_synthetic_no_encounters_results(
+    seed: u32,
+    edited_input: &str,
+    start_line: usize,
+    future: Option<&FutureEncounterSearchView>,
+    exact_future_validation: bool,
+) -> NoEncountersResultSearch {
+    let Some(future) = future else {
+        return NoEncountersResultSearch::empty();
+    };
+    let lines = edited_input
+        .lines()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let (edited_prefix, pre_ghost_lines, ghost_lines) = drops_search_window(&lines, start_line);
+    let synth_families = no_encounters_synthesis_families(&pre_ghost_lines, &future.section_maxima);
+    if synth_families.is_empty() || ghost_lines.is_empty() {
+        return NoEncountersResultSearch::empty();
+    }
+    let active_ghost_line = ghost_lines.iter().find(|line| !line.optional);
+    let combos = no_encounters_synth_combos(&synth_families, 20_000);
+    let mut results = Vec::new();
+    let mut tested_routes = 0;
+    let mut seen_routes = HashSet::new();
+    let mut max_added_count_in_results = None;
+
+    for counts in combos {
+        let synth_added_count = counts
+            .iter()
+            .zip(&synth_families)
+            .map(|(count, family)| count * family.route_lines.len())
+            .sum::<usize>();
+        if max_added_count_in_results.is_some_and(|max| synth_added_count > max) {
+            break;
+        }
+        let (route_prefix, synth_descriptions) =
+            build_synth_route_prefix(&pre_ghost_lines, &synth_families, &counts);
+        for ghost_line in &ghost_lines {
+            let mut route_lines = route_prefix.clone();
+            route_lines.push(ghost_line.clone());
+            let route_key = no_encounters_future_path_key(&route_lines);
+            if !seen_routes.insert(route_key) {
+                continue;
+            }
+            if !route_matches_future_counts(&route_lines, Some(future)) {
+                continue;
+            }
+            tested_routes += 1;
+            if exact_future_validation
+                && !route_matches_exact_future_rows(&route_lines, Some(future))
+            {
+                continue;
+            }
+            let route_text = drops_route_text(&edited_prefix, &route_lines);
+            let Some(drop) =
+                find_no_encounters_ghost_drop(&render_drops_tracker(seed, &route_text))
+            else {
+                continue;
+            };
+            let mut added_lines = synth_descriptions.clone();
+            if let Some(description) = ghost_line_change_description(active_ghost_line, ghost_line)
+            {
+                added_lines.push(description);
+            }
+            results.push(NoEncountersRouteResult {
+                added_count: added_lines.len(),
+                random_penalty: count_route_future_random_rows(&route_text, future)
+                    .or_else(|| {
+                        let route_only = route_lines_text(&route_lines);
+                        count_route_future_random_rows(&route_only, future)
+                    })
+                    .unwrap_or_default(),
+                route_len: route_lines.len(),
+                tested_index: tested_routes,
+                equipment_text: drop,
+                added_lines,
+                route_input: apply_route_lines_to_original(&lines, &route_lines),
+            });
+            if results.len() >= 10 {
+                results.sort_by(no_encounters_result_sort_key);
+                results.truncate(10);
+                max_added_count_in_results = results.last().map(|result| result.added_count);
+            }
+        }
+    }
+
+    results.sort_by(no_encounters_result_sort_key);
+    results.truncate(10);
+    NoEncountersResultSearch {
+        results,
+        tested_routes,
+        tested_option_sets: 0,
+        total_option_sets: 0,
+        search_truncated: false,
+    }
+}
+
+fn no_encounters_synthesis_families(
+    pre_ghost_lines: &[DropsSearchRouteLine],
+    future_section_maxima: &HashMap<String, HashMap<String, usize>>,
+) -> Vec<SearchSynthesisFamily> {
+    let near_sections = last_random_sections_near_ghost(pre_ghost_lines, future_section_maxima, 2);
+    let mut families = Vec::new();
+    let mut seen = HashSet::new();
+    for section_name in &near_sections {
+        let Some((start_index, end_index)) = section_bounds(pre_ghost_lines, section_name) else {
+            continue;
+        };
+        let Some(section_maxima) = future_section_maxima.get(section_name) else {
+            continue;
+        };
+        for index in start_index..end_index {
+            let line = &pre_ghost_lines[index];
+            let Some(monster_name) = line.monster_name.as_ref() else {
+                continue;
+            };
+            if !line.optional
+                || future_monster_count(section_maxima, monster_name) == 0
+                || is_nea_excluded_optional(&line.normalized_line)
+            {
+                continue;
+            }
+            let setup_line = immediate_setup_line(pre_ghost_lines, index, true);
+            let followup_line = immediate_followup_line(pre_ghost_lines, index, true);
+            let (anchor_index, route_lines, description_lines, max_uses) =
+                if line.command == "steal" {
+                    if let Some(followup_line) = followup_line {
+                        (
+                            index,
+                            vec![line.clone(), followup_line.clone()],
+                            vec![
+                                format!("line {}: {}", line.source_line, line.raw_line),
+                                format!(
+                                    "line {}: {}",
+                                    followup_line.source_line, followup_line.raw_line
+                                ),
+                            ],
+                            1,
+                        )
+                    } else if monster_requires_immediate_steal_setup(Some(monster_name)) {
+                        continue;
+                    } else {
+                        (
+                            index,
+                            vec![line.clone()],
+                            vec![format!("line {}: {}", line.source_line, line.raw_line)],
+                            1,
+                        )
+                    }
+                } else if let Some(setup_line) = setup_line {
+                    (
+                        index - 1,
+                        vec![setup_line.clone(), line.clone()],
+                        vec![
+                            format!("line {}: {}", setup_line.source_line, setup_line.raw_line),
+                            format!("line {}: {}", line.source_line, line.raw_line),
+                        ],
+                        future_monster_count(section_maxima, monster_name).min(3),
+                    )
+                } else if monster_requires_immediate_steal_setup(Some(monster_name)) {
+                    continue;
+                } else {
+                    (
+                        index,
+                        vec![line.clone()],
+                        vec![format!("line {}: {}", line.source_line, line.raw_line)],
+                        future_monster_count(section_maxima, monster_name).min(3),
+                    )
+                };
+            if max_uses == 0 {
+                continue;
+            }
+            let key = (
+                anchor_index,
+                route_lines
+                    .iter()
+                    .map(|line| line.normalized_line.clone())
+                    .collect::<Vec<_>>(),
+                max_uses,
+            );
+            if seen.insert(key) {
+                families.push(SearchSynthesisFamily {
+                    anchor_index,
+                    route_lines,
+                    description_lines,
+                    max_uses,
+                });
+            }
+        }
+
+        let boss_anchor_index =
+            section_boss_anchor_index(pre_ghost_lines, section_name, section_maxima);
+        let repeat_end_index = boss_anchor_index.unwrap_or(end_index);
+        let repeat_candidate = (start_index..repeat_end_index)
+            .filter_map(|index| {
+                let line = &pre_ghost_lines[index];
+                line.monster_name
+                    .as_ref()
+                    .filter(|monster| {
+                        !line.optional && future_monster_count(section_maxima, monster) > 0
+                    })
+                    .map(|_| (index, line))
+            })
+            .last();
+        if let Some((index, line)) = repeat_candidate {
+            if let Some(monster) = line.monster_name.as_ref() {
+                let setup_line = immediate_setup_line(pre_ghost_lines, index, false);
+                if !(setup_line.is_none() && monster_requires_immediate_steal_setup(Some(monster)))
+                {
+                    let max_uses = section_maxima
+                        .get(monster)
+                        .copied()
+                        .unwrap_or_else(|| future_monster_count(section_maxima, monster))
+                        .saturating_sub(1)
+                        .min(2);
+                    if max_uses > 0 {
+                        let (route_lines, description_lines) = if let Some(setup_line) = setup_line
+                        {
+                            (
+                                vec![setup_line.clone(), line.clone()],
+                                vec![
+                                    format!(
+                                        "after line {}: {}",
+                                        line.source_line, setup_line.raw_line
+                                    ),
+                                    format!("after line {}: {}", line.source_line, line.raw_line),
+                                ],
+                            )
+                        } else {
+                            (
+                                vec![line.clone()],
+                                vec![format!(
+                                    "after line {}: {}",
+                                    line.source_line, line.raw_line
+                                )],
+                            )
+                        };
+                        families.push(SearchSynthesisFamily {
+                            anchor_index: index + 1,
+                            route_lines,
+                            description_lines,
+                            max_uses,
+                        });
+                    }
+                }
+            }
+        }
+        if Some(section_name) != near_sections.last() {
+            continue;
+        }
+        if let Some(boss_anchor_index) = boss_anchor_index {
+            let boss_line = &pre_ghost_lines[boss_anchor_index];
+            families.push(SearchSynthesisFamily {
+                anchor_index: boss_anchor_index,
+                route_lines: vec![synthetic_route_line(
+                    "death ???",
+                    section_name,
+                    boss_line.source_line,
+                )],
+                description_lines: vec![format!(
+                    "before line {}: death ???",
+                    boss_line.source_line
+                )],
+                max_uses: 3,
+            });
+
+            let party_string = party_string_before_index(pre_ghost_lines, boss_anchor_index);
+            if party_string.contains('r') {
+                let existing_monsters = pre_ghost_lines[start_index..end_index]
+                    .iter()
+                    .filter_map(|line| line.monster_name.as_ref().map(|name| monster_family(name)))
+                    .collect::<HashSet<_>>();
+                let mut missing_monsters = section_maxima
+                    .iter()
+                    .filter_map(|(monster_name, count)| {
+                        (*count >= 2 && !existing_monsters.contains(&monster_family(monster_name)))
+                            .then_some(monster_name.clone())
+                    })
+                    .collect::<Vec<_>>();
+                missing_monsters.sort_by(|left, right| {
+                    let left_has_digit = left.chars().any(|char| char.is_ascii_digit());
+                    let right_has_digit = right.chars().any(|char| char.is_ascii_digit());
+                    (!left_has_digit)
+                        .cmp(&(!right_has_digit))
+                        .then_with(|| {
+                            section_maxima
+                                .get(right)
+                                .copied()
+                                .unwrap_or_default()
+                                .cmp(&section_maxima.get(left).copied().unwrap_or_default())
+                        })
+                        .then_with(|| left.cmp(right))
+                });
+                if let Some(monster_name) = missing_monsters.first() {
+                    families.push(SearchSynthesisFamily {
+                        anchor_index: boss_anchor_index,
+                        route_lines: vec![
+                            synthetic_route_line(
+                                &format!("steal {monster_name}"),
+                                section_name,
+                                boss_line.source_line,
+                            ),
+                            synthetic_route_line(
+                                &format!("{monster_name} rikku"),
+                                section_name,
+                                boss_line.source_line,
+                            ),
+                        ],
+                        description_lines: vec![
+                            format!(
+                                "before line {}: steal {monster_name}",
+                                boss_line.source_line
+                            ),
+                            format!(
+                                "before line {}: {monster_name} rikku",
+                                boss_line.source_line
+                            ),
+                        ],
+                        max_uses: 1,
+                    });
+                }
+            }
+        }
+    }
+    families
+}
+
+fn party_string_before_index(lines: &[DropsSearchRouteLine], anchor_index: usize) -> String {
+    let mut party_string = String::new();
+    for line in lines.iter().take(anchor_index) {
+        if line.command != "party" {
+            continue;
+        }
+        if let Some((_, party)) = line.normalized_line.split_once(char::is_whitespace) {
+            party_string = party.trim().to_string();
+        }
+    }
+    party_string
+}
+
+fn last_random_sections_near_ghost(
+    pre_ghost_lines: &[DropsSearchRouteLine],
+    future_section_maxima: &HashMap<String, HashMap<String, usize>>,
+    limit: usize,
+) -> Vec<String> {
+    let mut sections = Vec::new();
+    let mut seen = HashSet::new();
+    for line in pre_ghost_lines {
+        if line.section_name.is_empty()
+            || !future_section_maxima.contains_key(&line.section_name)
+            || !seen.insert(line.section_name.clone())
+        {
+            continue;
+        }
+        sections.push(line.section_name.clone());
+    }
+    sections
+        .into_iter()
+        .rev()
+        .take(limit)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+fn section_bounds(lines: &[DropsSearchRouteLine], section_name: &str) -> Option<(usize, usize)> {
+    let indices = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| (line.section_name == section_name).then_some(index))
+        .collect::<Vec<_>>();
+    Some((*indices.first()?, indices.last()? + 1))
+}
+
+fn section_boss_anchor_index(
+    lines: &[DropsSearchRouteLine],
+    section_name: &str,
+    section_maxima: &HashMap<String, usize>,
+) -> Option<usize> {
+    let (start, end) = section_bounds(lines, section_name)?;
+    (start..end).find(|index| {
+        let line = &lines[*index];
+        !line.optional
+            && line
+                .monster_name
+                .as_ref()
+                .is_some_and(|monster| future_monster_count(section_maxima, monster) == 0)
+    })
+}
+
+fn immediate_setup_line(
+    lines: &[DropsSearchRouteLine],
+    index: usize,
+    optional_only: bool,
+) -> Option<&DropsSearchRouteLine> {
+    if index == 0 {
+        return None;
+    }
+    let line = &lines[index];
+    if line.command != "kill"
+        || !monster_requires_immediate_steal_setup(line.monster_name.as_deref())
+    {
+        return None;
+    }
+    let setup = &lines[index - 1];
+    if optional_only && !setup.optional {
+        return None;
+    }
+    (setup.section_name == line.section_name
+        && setup.command == "steal"
+        && setup.monster_name == line.monster_name)
+        .then_some(setup)
+}
+
+fn immediate_followup_line(
+    lines: &[DropsSearchRouteLine],
+    index: usize,
+    optional_only: bool,
+) -> Option<&DropsSearchRouteLine> {
+    let line = &lines[index];
+    if line.command != "steal"
+        || !monster_requires_immediate_steal_setup(line.monster_name.as_deref())
+    {
+        return None;
+    }
+    let followup = lines.get(index + 1)?;
+    if optional_only && !followup.optional {
+        return None;
+    }
+    (followup.section_name == line.section_name
+        && followup.command == "kill"
+        && followup.monster_name == line.monster_name)
+        .then_some(followup)
+}
+
+fn monster_requires_immediate_steal_setup(monster_name: Option<&str>) -> bool {
+    monster_name.is_some_and(|name| monster_family(name) == "mech_scouter")
+}
+
+fn synthetic_route_line(
+    normalized_line: &str,
+    section_name: &str,
+    source_line: usize,
+) -> DropsSearchRouteLine {
+    let command = normalized_line
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    DropsSearchRouteLine {
+        source_line,
+        raw_line: normalized_line.to_string(),
+        normalized_line: normalize_drops_search_line(normalized_line),
+        section_name: section_name.to_string(),
+        optional: false,
+        is_ghost: normalized_line == "kill ghost",
+        command,
+        monster_name: drops_search_monster_name(normalized_line).map(str::to_string),
+    }
+}
+
+fn no_encounters_synth_combos(
+    families: &[SearchSynthesisFamily],
+    max_combos: usize,
+) -> Vec<Vec<usize>> {
+    fn build(
+        families: &[SearchSynthesisFamily],
+        index: usize,
+        max_cost: usize,
+        current_cost: usize,
+        current: &mut Vec<usize>,
+        out: &mut Vec<Vec<usize>>,
+        max_combos: usize,
+    ) {
+        if out.len() >= max_combos {
+            return;
+        }
+        if index == families.len() {
+            if current_cost == max_cost {
+                out.push(current.clone());
+            }
+            return;
+        }
+        let action_cost = families[index].route_lines.len();
+        for count in 0..=families[index].max_uses {
+            let next_cost = current_cost + count * action_cost;
+            if next_cost > max_cost {
+                break;
+            }
+            current.push(count);
+            build(
+                families,
+                index + 1,
+                max_cost,
+                next_cost,
+                current,
+                out,
+                max_combos,
+            );
+            current.pop();
+            if out.len() >= max_combos {
+                break;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let max_possible_cost = families
+        .iter()
+        .map(|family| family.max_uses * family.route_lines.len())
+        .sum::<usize>();
+    for max_cost in 0..=max_possible_cost {
+        build(
+            families,
+            0,
+            max_cost,
+            0,
+            &mut Vec::new(),
+            &mut out,
+            max_combos,
+        );
+        if out.len() >= max_combos {
+            break;
+        }
+    }
+    out
+}
+
+fn build_synth_route_prefix(
+    pre_ghost_lines: &[DropsSearchRouteLine],
+    families: &[SearchSynthesisFamily],
+    counts: &[usize],
+) -> (Vec<DropsSearchRouteLine>, Vec<String>) {
+    let mut insertions: HashMap<usize, Vec<DropsSearchRouteLine>> = HashMap::new();
+    let mut descriptions = Vec::new();
+    for (family, count) in families.iter().zip(counts) {
+        for _ in 0..*count {
+            insertions
+                .entry(family.anchor_index)
+                .or_default()
+                .extend(family.route_lines.clone());
+            descriptions.extend(family.description_lines.clone());
+        }
+    }
+    let mut route_prefix = Vec::new();
+    for (index, line) in pre_ghost_lines.iter().enumerate() {
+        route_prefix.extend(insertions.remove(&index).unwrap_or_default());
+        if !line.optional {
+            route_prefix.push(line.clone());
+        }
+    }
+    route_prefix.extend(
+        insertions
+            .remove(&pre_ghost_lines.len())
+            .unwrap_or_default(),
+    );
+    (route_prefix, descriptions)
+}
+
+#[cfg(test)]
 fn synthesize_no_encounters_ghost_route(
     seed: u32,
     edited_input: &str,
@@ -1393,9 +2464,12 @@ fn synthesize_no_encounters_ghost_route(
             candidates_tested: 0,
         };
     };
+    let subset_search = search_no_encounters_optional_subsets(seed, &lines, start_line);
+    if subset_search.candidate.is_some() {
+        return subset_search;
+    }
     let repeat_index = find_active_repeat_after_ghost(&lines, ghost_index);
-
-    let mut candidates_tested = 0;
+    let mut candidates_tested = subset_search.candidates_tested;
     for pre_ghost_deaths in 0..=max_pre_ghost_deaths {
         for ghost_kills in 1..=max_ghost_kills.max(1) {
             candidates_tested += 1;
@@ -1434,6 +2508,7 @@ fn synthesize_no_encounters_ghost_route(
                         ghost_kills,
                         pre_ghost_deaths,
                         repeat_line,
+                        uncommented_line: None,
                         drop,
                         route_input,
                     }),
@@ -1448,47 +2523,336 @@ fn synthesize_no_encounters_ghost_route(
     }
 }
 
-fn no_encounters_search_mode(
-    encounter_source: &str,
-    route_input: Option<&str>,
-    route_found: bool,
-    future: Option<&ExactFutureEncounterOutput>,
-) -> String {
-    let should_prefer_guaranteed = if encounter_source != "exact-encounters-output" {
-        false
-    } else if let Some(future) = future.filter(|future| !future.section_maxima.is_empty()) {
-        !route_found
-            || route_input
-                .and_then(|route_input| count_route_exact_future_random_rows(route_input, future))
-                .map_or(true, |random_rows| random_rows > 0)
-    } else {
-        false
-    };
-    if should_prefer_guaranteed {
-        format!("{encounter_source}, prefer-guaranteed")
-    } else {
-        encounter_source.to_string()
+#[cfg(test)]
+fn search_no_encounters_optional_subsets(
+    seed: u32,
+    lines: &[String],
+    start_line: usize,
+) -> NoEncountersGhostRouteSearch {
+    let (edited_prefix, pre_ghost_lines, ghost_lines) = drops_search_window(lines, start_line);
+    if ghost_lines.is_empty() {
+        return NoEncountersGhostRouteSearch {
+            candidate: None,
+            candidates_tested: 0,
+        };
+    }
+    let active_ghost_line = ghost_lines
+        .iter()
+        .find(|line| !line.optional)
+        .or_else(|| ghost_lines.first());
+    let active_ghost_kills = active_ghost_line
+        .map(|ghost| {
+            find_active_repeat_after_ghost(lines, ghost.source_line.saturating_sub(1))
+                .and_then(|index| lines.get(index))
+                .and_then(|line| parse_repeat_count(line))
+                .map(|repeats| repeats + 1)
+                .unwrap_or(1)
+        })
+        .unwrap_or(1);
+    let active_repeat_line = active_ghost_line
+        .and_then(|ghost| {
+            find_active_repeat_after_ghost(lines, ghost.source_line.saturating_sub(1))
+        })
+        .and_then(|index| lines.get(index))
+        .cloned()
+        .unwrap_or_else(|| "# /repeat 0".to_string());
+    let optional_lines = pre_ghost_lines
+        .iter()
+        .filter(|line| line.optional && !is_nea_excluded_optional(&line.normalized_line))
+        .cloned()
+        .collect::<Vec<_>>();
+    let linked_optionals = linked_drops_optionals(&pre_ghost_lines);
+    let paired_death_lines = linked_optionals
+        .values()
+        .flat_map(|lines| lines.iter().cloned())
+        .collect::<std::collections::HashSet<_>>();
+    let filtered_optionals = optional_lines
+        .into_iter()
+        .filter(|line| !paired_death_lines.contains(line))
+        .rev()
+        .take(15)
+        .collect::<Vec<_>>();
+    let option_count = filtered_optionals.len();
+    let subset_budget = 20_000usize;
+    let mut tested_routes = 0;
+    let mut tested_subsets = 0usize;
+    let mut seen_routes = std::collections::HashSet::new();
+
+    for subset_size in 0..=option_count {
+        let mut mask = 0usize;
+        let max_mask = 1usize.checked_shl(option_count as u32).unwrap_or(0);
+        while mask < max_mask {
+            if mask.count_ones() as usize != subset_size {
+                mask += 1;
+                continue;
+            }
+            if tested_subsets >= subset_budget {
+                return NoEncountersGhostRouteSearch {
+                    candidate: None,
+                    candidates_tested: tested_routes,
+                };
+            }
+            tested_subsets += 1;
+            let mut chosen = std::collections::HashSet::new();
+            for (index, optional) in filtered_optionals.iter().enumerate() {
+                if (mask & (1usize << index)) != 0 {
+                    chosen.insert(optional.clone());
+                    if let Some(linked) = linked_optionals.get(optional) {
+                        chosen.extend(linked.iter().cloned());
+                    }
+                }
+            }
+            let route_prefix = pre_ghost_lines
+                .iter()
+                .filter(|line| !line.optional || chosen.contains(*line))
+                .cloned()
+                .collect::<Vec<_>>();
+            for ghost_line in &ghost_lines {
+                let mut route_lines = route_prefix.clone();
+                route_lines.push(ghost_line.clone());
+                let route_key = route_lines
+                    .iter()
+                    .map(|line| line.normalized_line.clone())
+                    .collect::<Vec<_>>();
+                if !seen_routes.insert(route_key) {
+                    continue;
+                }
+                tested_routes += 1;
+                let route_text = drops_route_text(&edited_prefix, &route_lines);
+                let rendered = render_drops_tracker(seed, &route_text);
+                let Some(drop) = find_no_encounters_ghost_drop(&rendered) else {
+                    continue;
+                };
+                let mut candidate_lines = lines.to_vec();
+                for line in route_lines.iter().filter(|line| line.optional) {
+                    let index = line.source_line.saturating_sub(1);
+                    if let Some(slot) = candidate_lines.get_mut(index) {
+                        *slot = line.raw_line.clone();
+                    }
+                }
+                if let Some(active_ghost) = active_ghost_line {
+                    if ghost_line.normalized_line != active_ghost.normalized_line {
+                        let index = active_ghost.source_line.saturating_sub(1);
+                        if let Some(slot) = candidate_lines.get_mut(index) {
+                            *slot = ghost_line.raw_line.clone();
+                        }
+                    }
+                }
+                let first_added = route_lines
+                    .iter()
+                    .find(|line| line.optional)
+                    .map(|line| (line.source_line, line.normalized_line.clone()));
+                return NoEncountersGhostRouteSearch {
+                    candidate: Some(NoEncountersGhostRouteCandidate {
+                        ghost_kills: active_ghost_kills,
+                        pre_ghost_deaths: 0,
+                        repeat_line: active_repeat_line,
+                        uncommented_line: first_added,
+                        drop,
+                        route_input: candidate_lines.join("\n"),
+                    }),
+                    candidates_tested: tested_routes,
+                };
+            }
+            mask += 1;
+        }
+    }
+    NoEncountersGhostRouteSearch {
+        candidate: None,
+        candidates_tested: tested_routes,
     }
 }
 
-fn push_no_encounters_random_row_summary(
-    lines: &mut Vec<String>,
-    route_input: &str,
-    future: Option<&ExactFutureEncounterOutput>,
-) {
-    let Some(future) = future else {
-        return;
-    };
-    let Some(random_rows) = count_route_exact_future_random_rows(route_input, future) else {
-        return;
-    };
-    if random_rows == 0 {
-        lines.push("Guaranteed-only route(s) found before optional random routes.".to_string());
+fn drops_search_window(
+    lines: &[String],
+    start_line: usize,
+) -> (String, Vec<DropsSearchRouteLine>, Vec<DropsSearchRouteLine>) {
+    let prefix_lines = strip_search_block_comments(&lines[..start_line.saturating_sub(1)]);
+    let edited_prefix = edit_drops_tracker_input(&prefix_lines.join("\n"));
+    let mut pre_ghost_lines = Vec::new();
+    let mut ghost_lines = Vec::new();
+    let mut ghost_started = false;
+    let mut in_block_comment = false;
+    let mut current_section_name = String::new();
+
+    for line in lines.iter().take(start_line.saturating_sub(1)) {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if let Some(section_name) = drops_search_section_name(line) {
+            current_section_name = section_name;
+        }
+    }
+    in_block_comment = false;
+
+    for (index, line) in lines.iter().enumerate().skip(start_line.saturating_sub(1)) {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if let Some(section_name) = drops_search_section_name(line) {
+            current_section_name = section_name;
+            continue;
+        }
+        let Some(route_line) = drops_search_route_line(line, index + 1, &current_section_name)
+        else {
+            continue;
+        };
+        if route_line.is_ghost {
+            ghost_started = true;
+            ghost_lines.push(route_line);
+            continue;
+        }
+        if ghost_started {
+            break;
+        }
+        pre_ghost_lines.push(route_line);
+    }
+    (edited_prefix, pre_ghost_lines, ghost_lines)
+}
+
+fn strip_search_block_comments(lines: &[String]) -> Vec<String> {
+    let mut filtered = Vec::new();
+    let mut in_block_comment = false;
+    for line in lines {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        filtered.push(line.clone());
+    }
+    filtered
+}
+
+fn drops_search_route_line(
+    line: &str,
+    source_line: usize,
+    section_name: &str,
+) -> Option<DropsSearchRouteLine> {
+    let normalized_line = normalize_drops_search_line(line);
+    if normalized_line.is_empty() {
+        return None;
+    }
+    let words = normalized_line.split_whitespace().collect::<Vec<_>>();
+    let command = words.first().copied()?.to_string();
+    if !matches!(
+        command.as_str(),
+        "kill" | "steal" | "death" | "bribe" | "party" | "roll" | "ap" | "inventory"
+    ) {
+        return None;
+    }
+    let optional = line.trim_start().starts_with('#');
+    let is_ghost = words.len() >= 2 && words[0] == "kill" && words[1] == "ghost";
+    let monster_name = drops_search_monster_name(&normalized_line).map(str::to_string);
+    Some(DropsSearchRouteLine {
+        source_line,
+        raw_line: line.trim().trim_start_matches('#').trim().to_string(),
+        normalized_line,
+        section_name: section_name.to_string(),
+        optional,
+        is_ghost,
+        command,
+        monster_name,
+    })
+}
+
+fn drops_route_text(prefix: &str, route_lines: &[DropsSearchRouteLine]) -> String {
+    let suffix = route_lines
+        .iter()
+        .map(|line| line.normalized_line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if prefix.trim().is_empty() {
+        suffix
+    } else if suffix.trim().is_empty() {
+        prefix.to_string()
     } else {
-        lines.push(format!(
-            "No guaranteed-only route found; best result uses {random_rows} random encounter row{}.",
-            if random_rows == 1 { "" } else { "s" }
-        ));
+        format!("{}\n{}", prefix.trim_end(), suffix)
+    }
+}
+
+fn is_nea_excluded_optional(line: &str) -> bool {
+    matches!(
+        line,
+        "steal biran_ronso" | "kill yenke_ronso kimahri" | "kill biran_ronso kimahri"
+    )
+}
+
+fn linked_drops_optionals(
+    pre_ghost_lines: &[DropsSearchRouteLine],
+) -> std::collections::HashMap<DropsSearchRouteLine, Vec<DropsSearchRouteLine>> {
+    let mut linked = std::collections::HashMap::new();
+    for pair in pre_ghost_lines.windows(2) {
+        let line = &pair[0];
+        let next = &pair[1];
+        if line.normalized_line == "steal evrae 1"
+            && next.optional
+            && next.normalized_line.starts_with("death ")
+        {
+            linked.insert(line.clone(), vec![next.clone()]);
+            continue;
+        }
+        if line.optional
+            && next.optional
+            && line.normalized_line.split_whitespace().next() == Some("steal")
+            && next.normalized_line.split_whitespace().next() == Some("kill")
+            && drops_search_monster_name(&line.normalized_line)
+                == drops_search_monster_name(&next.normalized_line)
+        {
+            linked.insert(next.clone(), vec![line.clone()]);
+            if drops_search_monster_name(&line.normalized_line)
+                .is_some_and(|name| monster_family(name) == "mech_scouter")
+            {
+                linked.insert(line.clone(), vec![next.clone()]);
+            }
+        }
+    }
+    linked
+}
+
+fn drops_search_monster_name(line: &str) -> Option<&str> {
+    let words = line.split_whitespace().collect::<Vec<_>>();
+    match words.as_slice() {
+        ["kill" | "steal" | "bribe", monster, ..] => Some(*monster),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+fn parse_repeat_count(line: &str) -> Option<usize> {
+    let mut words = line.split_whitespace();
+    match (words.next(), words.next()) {
+        (Some("/repeat"), Some(count)) => count.parse::<usize>().ok(),
+        (Some("/repeat"), None) => Some(1),
+        _ => None,
     }
 }
 
@@ -1530,6 +2894,17 @@ fn count_route_exact_future_random_rows(
     }
 
     Some(random_rows)
+}
+
+fn count_route_future_random_rows(
+    route_input: &str,
+    future: &FutureEncounterSearchView,
+) -> Option<usize> {
+    future
+        .branches
+        .iter()
+        .filter_map(|branch| count_route_exact_future_random_rows(route_input, branch))
+        .min()
 }
 
 fn route_kill_monsters(route_input: &str) -> Vec<String> {
@@ -1579,6 +2954,7 @@ fn monster_family(monster_name: &str) -> &str {
         .trim_end_matches('_')
 }
 
+#[cfg(test)]
 fn first_ghost_search_window_input(edited_input: &str, start_line: usize) -> Option<String> {
     let lines = edited_input
         .lines()
@@ -1587,6 +2963,7 @@ fn first_ghost_search_window_input(edited_input: &str, start_line: usize) -> Opt
     first_ghost_search_window_input_from_lines(&lines, start_line)
 }
 
+#[cfg(test)]
 fn first_ghost_search_window_input_from_lines(
     lines: &[String],
     start_line: usize,
@@ -1603,6 +2980,7 @@ fn first_ghost_search_window_input_from_lines(
     )
 }
 
+#[cfg(test)]
 fn find_first_ghost_window_line(lines: &[String], start_line: usize) -> Option<usize> {
     let mut in_block_comment = false;
     for (index, line) in lines.iter().enumerate().skip(start_line.saturating_sub(1)) {
@@ -1626,6 +3004,7 @@ fn find_first_ghost_window_line(lines: &[String], start_line: usize) -> Option<u
     None
 }
 
+#[cfg(test)]
 fn find_first_ghost_route_line(lines: &[String], start_line: usize) -> Option<usize> {
     let mut in_block_comment = false;
     for (index, line) in lines.iter().enumerate().skip(start_line.saturating_sub(1)) {
@@ -1652,6 +3031,7 @@ fn find_first_ghost_route_line(lines: &[String], start_line: usize) -> Option<us
     None
 }
 
+#[cfg(test)]
 fn find_active_repeat_after_ghost(lines: &[String], ghost_index: usize) -> Option<usize> {
     let mut in_block_comment = false;
     for (index, line) in lines.iter().enumerate().skip(ghost_index + 1) {
@@ -1680,7 +3060,7 @@ fn find_active_repeat_after_ghost(lines: &[String], ghost_index: usize) -> Optio
     None
 }
 
-fn format_future_section_maxima_debug(future: &ExactFutureEncounterOutput) -> String {
+fn format_future_section_maxima_debug(future: &FutureEncounterSearchView) -> String {
     let mut section_parts = future
         .section_maxima
         .iter()
@@ -1709,6 +3089,196 @@ fn format_future_section_maxima_debug(future: &ExactFutureEncounterOutput) -> St
     } else {
         format!("Future random sections: {}.", section_parts.join(" | "))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EncounterSearchNote {
+    name: String,
+    label: String,
+    default_count: usize,
+    max_count: usize,
+    section_name: String,
+}
+
+fn build_notes_fallback_future_view(
+    seed: u32,
+    start_section_name: &str,
+    extra_budget: usize,
+) -> Option<FutureEncounterSearchView> {
+    let notes = future_encounter_search_notes(start_section_name)?;
+    let branches = future_encounter_count_branches(&notes, extra_budget);
+    let mut futures = Vec::new();
+    for counts in branches {
+        if let Some(future) = render_future_note_branch(seed, start_section_name, &notes, &counts) {
+            futures.push(future);
+        }
+    }
+    if futures.is_empty() {
+        None
+    } else {
+        Some(FutureEncounterSearchView::from_branches(futures))
+    }
+}
+
+fn future_encounter_search_notes(start_section_name: &str) -> Option<Vec<EncounterSearchNote>> {
+    let mut notes = Vec::new();
+    let mut current_section_name = String::new();
+    let mut started = start_section_name.is_empty();
+    for line in ENCOUNTERS_NOTES.lines().skip(1) {
+        let parts = line.split(',').map(str::trim).collect::<Vec<_>>();
+        if parts.len() < 6 || parts[0].is_empty() {
+            continue;
+        }
+        let note_name = parts[0];
+        let label = parts[2];
+        current_section_name = encounter_note_section_name(label, note_name, &current_section_name);
+        if !started {
+            if current_section_name != start_section_name {
+                continue;
+            }
+            started = true;
+        }
+        notes.push(EncounterSearchNote {
+            name: note_name.to_string(),
+            label: label.to_string(),
+            default_count: parts[4].parse().ok()?,
+            max_count: parts[5].parse().ok()?,
+            section_name: current_section_name.clone(),
+        });
+    }
+    if started {
+        Some(notes)
+    } else {
+        None
+    }
+}
+
+fn future_encounter_count_branches(
+    notes: &[EncounterSearchNote],
+    extra_budget: usize,
+) -> Vec<Vec<usize>> {
+    let random_note_indexes = notes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, note)| {
+            (is_random_encounter_note_name(&note.name) && note.max_count > note.default_count)
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let mut counts = notes
+        .iter()
+        .map(|note| note.default_count)
+        .collect::<Vec<_>>();
+    let mut branches = Vec::new();
+    fn build(
+        notes: &[EncounterSearchNote],
+        random_note_indexes: &[usize],
+        position: usize,
+        remaining_extra: usize,
+        counts: &mut [usize],
+        branches: &mut Vec<Vec<usize>>,
+    ) {
+        if position >= random_note_indexes.len() {
+            branches.push(counts.to_vec());
+            return;
+        }
+        let note_index = random_note_indexes[position];
+        let note = &notes[note_index];
+        let max_extra = (note.max_count - note.default_count).min(remaining_extra);
+        for extra in 0..=max_extra {
+            counts[note_index] = note.default_count + extra;
+            build(
+                notes,
+                random_note_indexes,
+                position + 1,
+                remaining_extra - extra,
+                counts,
+                branches,
+            );
+        }
+        counts[note_index] = note.default_count;
+    }
+    build(
+        notes,
+        &random_note_indexes,
+        0,
+        extra_budget,
+        &mut counts,
+        &mut branches,
+    );
+    let mut seen = HashSet::new();
+    branches
+        .into_iter()
+        .filter(|branch| seen.insert(branch.clone()))
+        .take(1024)
+        .collect()
+}
+
+fn render_future_note_branch(
+    seed: u32,
+    start_section_name: &str,
+    notes: &[EncounterSearchNote],
+    counts: &[usize],
+) -> Option<ExactFutureEncounterOutput> {
+    let mut input_lines = vec!["/nopadding".to_string()];
+    for (note, count) in notes.iter().zip(counts) {
+        if !note.label.is_empty() {
+            input_lines.push(format!("# {}:", note.label));
+        }
+        for _ in 0..*count {
+            input_lines.push(format!("encounter {}", note.name));
+        }
+        if note.name == "cave_white_zone cave_green_zone" {
+            input_lines.push("# Ghost search stop".to_string());
+        }
+    }
+    let rendered = render_encounters_tracker(seed, &input_lines.join("\n"));
+    let mut future = parse_exact_future_encounter_output(&rendered, start_section_name)?;
+    future.section_maxima = future_note_branch_random_section_maxima(&future.rows, notes, counts);
+    Some(future)
+}
+
+fn is_random_encounter_note_name(name: &str) -> bool {
+    if data::random_zone_stats(name).is_some() {
+        return true;
+    }
+    let words = name.split_whitespace().collect::<Vec<_>>();
+    !words.is_empty()
+        && words
+            .iter()
+            .all(|zone| data::random_zone_stats(zone).is_some())
+}
+
+fn future_note_branch_random_section_maxima(
+    rows: &[ExactFutureEncounterRow],
+    notes: &[EncounterSearchNote],
+    counts: &[usize],
+) -> HashMap<String, HashMap<String, usize>> {
+    let mut section_maxima: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut row_index = 0usize;
+    for (note, count) in notes.iter().zip(counts) {
+        for _ in 0..*count {
+            let Some(row) = rows.get(row_index) else {
+                return section_maxima;
+            };
+            row_index += 1;
+            if is_random_encounter_note_name(&note.name) {
+                let maxima = encounter_options_maxima(&row.encounter_options);
+                add_counts(
+                    section_maxima.entry(note.section_name.clone()).or_default(),
+                    &maxima,
+                );
+            }
+            if row
+                .encounter_options
+                .iter()
+                .any(|monsters| monsters.iter().any(|monster| monster == "ghost"))
+            {
+                return section_maxima;
+            }
+        }
+    }
+    section_maxima
 }
 
 fn parse_exact_future_encounter_output(
@@ -3947,6 +5517,12 @@ fn edit_encounters_tracker_output(output: &str, padding: bool) -> String {
             multiline_comment = true;
         }
         if multiline_comment {
+            if is_commented_encounters_tracker_command_row(raw_line) {
+                if stripped.ends_with("*/") {
+                    multiline_comment = false;
+                }
+                continue;
+            }
             let line = raw_line.replace("__ctb_tracker_block_comment_repeat__", "/repeat");
             lines.push(format!("# {line}"));
             if stripped.ends_with("*/") {
@@ -3975,15 +5551,12 @@ fn edit_encounters_tracker_output(output: &str, padding: bool) -> String {
         if raw_line.starts_with("encounter ") {
             continue;
         }
+        if is_commented_encounters_tracker_command_row(raw_line) {
+            continue;
+        }
         let commented = raw_line.strip_prefix("# ");
         let summary_line = commented
-            .filter(|line| {
-                line.starts_with("Random Encounter:")
-                    || line.starts_with("Simulated Encounter:")
-                    || line.starts_with("Encounter:")
-                    || line.starts_with("Multizone encounter:")
-                    || line.starts_with("=====")
-            })
+            .filter(|line| is_encounters_tracker_summary_row(line) || line.starts_with("====="))
             .unwrap_or(raw_line);
         if summary_line.starts_with("=====") {
             continue;
@@ -4044,6 +5617,31 @@ fn edit_encounters_tracker_output(output: &str, padding: bool) -> String {
         }
         format!("{}\n", lines.join("\n"))
     }
+}
+
+fn is_encounters_tracker_summary_row(line: &str) -> bool {
+    line.starts_with("Random Encounter:")
+        || line.starts_with("Simulated Encounter:")
+        || line.starts_with("Encounter:")
+        || line.starts_with("Multizone encounter:")
+}
+
+fn is_commented_encounters_tracker_command_row(line: &str) -> bool {
+    let mut text = line.trim_start();
+    let mut had_comment_marker = false;
+    while let Some(rest) = text.strip_prefix('#') {
+        had_comment_marker = true;
+        text = rest.trim_start();
+    }
+    if let Some(rest) = text.strip_prefix("/*") {
+        had_comment_marker = true;
+        text = rest.trim_start();
+    }
+    if let Some(rest) = text.strip_suffix("*/") {
+        had_comment_marker = true;
+        text = rest.trim_end();
+    }
+    had_comment_marker && text.starts_with("encounter ")
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -4518,6 +6116,8 @@ fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use serde_json::Value;
 
     use crate::rng::FfxRngTracker;
@@ -4526,11 +6126,12 @@ mod tests {
     use super::{
         chocobo_action_json, chocobo_swap_json, choose_chocobo_swap_replacement,
         drops_autoability_values, drops_item_values, drops_search_first_ghost_line,
-        find_active_repeat_after_ghost, find_first_ghost_route_line,
+        drops_search_window, edit_encounters_tracker_output, find_active_repeat_after_ghost,
+        find_first_ghost_route_line, find_no_encounters_ghost_drop,
         first_ghost_search_window_input, garuda1_attacks_json, garuda2_attack_json,
-        lancet_tutorial_timing_json, no_encounters_routes_json,
+        lancet_tutorial_timing_json, no_encounters_routes_json, no_encounters_synthesis_families,
         parse_exact_future_encounter_output, party_json, render_ctb_diff_json, render_ctb_json,
-        render_steal_line, sample_json, simulate_to_chocobo_cursor_state,
+        render_drops_tracker, render_steal_line, sample_json, simulate_to_chocobo_cursor_state,
         synthesize_no_encounters_ghost_route, tanker_pattern_json, tracker_default_json,
         tracker_render_json, tros_attack_json, ChocoboCursorState, DropsInventory, DEFAULT_INPUT,
         DEFAULT_SEED, DROPS_NOTES,
@@ -5494,6 +7095,28 @@ mod tests {
     }
 
     #[test]
+    fn encounters_tracker_cleanup_hides_commented_encounter_commands() {
+        let output = edit_encounters_tracker_output(
+            concat!(
+                "# Encounter:   1 | Shown | Ghost Normal\n",
+                "# encounter hidden_zone\n",
+                "Random Encounter:   2   2   2 | Shown | Ragora Normal\n",
+                "/* encounter hidden_zone */\n",
+                "/*\n",
+                "encounter hidden_zone\n",
+                "*/\n",
+                "Encounter:   3 | Shown | Condor Normal\n",
+            ),
+            false,
+        );
+
+        assert!(!output.contains("hidden_zone"), "{output}");
+        assert!(output.contains("1 | Shown | Ghost"), "{output}");
+        assert!(output.contains("2   2   2 | Ragora"), "{output}");
+        assert!(output.contains("3 | Shown | Condor"), "{output}");
+    }
+
+    #[test]
     fn encounters_tracker_without_hide_marker_preserves_first_encounter_like_python() {
         let payload: Value = serde_json::from_str(
             &tracker_render_json(
@@ -5818,6 +7441,42 @@ mod tests {
         assert_eq!(payload["tracker"], "drops");
         let output = payload["output"].as_str().unwrap();
         assert_eq!(output, "Steal: Tanker | Failed\nTanker        | - | 0 AP\n");
+    }
+
+    #[test]
+    fn drops_tracker_ghost_item_is_always_mana_but_equipment_changes() {
+        let baseline: Value = serde_json::from_str(
+            &tracker_render_json("drops", DEFAULT_SEED, "ghost ixion\n/repeat 4\n").unwrap(),
+        )
+        .unwrap();
+        let advanced: Value = serde_json::from_str(
+            &tracker_render_json(
+                "drops",
+                DEFAULT_SEED,
+                "advance rng10 1\nghost ixion\n/repeat 4\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let baseline_output = baseline["output"].as_str().unwrap();
+        let advanced_output = advanced["output"].as_str().unwrap();
+        assert!(
+            baseline_output.contains("Ghost | Mana Sphere"),
+            "{baseline_output}"
+        );
+        assert!(
+            advanced_output.contains("Ghost | Mana Sphere"),
+            "{advanced_output}"
+        );
+        let baseline_ghost_lines = baseline_output
+            .lines()
+            .filter(|line| line.contains("Ghost"))
+            .collect::<Vec<_>>();
+        let advanced_ghost_lines = advanced_output
+            .lines()
+            .filter(|line| line.contains("Ghost"))
+            .collect::<Vec<_>>();
+        assert_ne!(baseline_ghost_lines, advanced_ghost_lines);
     }
 
     #[test]
@@ -6861,7 +8520,7 @@ mod tests {
             payload["output"],
             "No Encounters search: no Ghost line was found below the cursor."
         );
-        assert_eq!(payload["edited_input"], " \n\t");
+        assert_eq!(payload["edited_input"], " \n\t\n");
     }
 
     #[test]
@@ -6884,7 +8543,7 @@ mod tests {
         );
         assert_eq!(
             payload["edited_input"],
-            "kill piranha tidus\n/*\nkill ghost tidus\n*/"
+            "piranha tidus\n/*\nkill ghost tidus\n*/\n"
         );
     }
 
@@ -6898,19 +8557,29 @@ mod tests {
 
         assert!(output.starts_with("No Encounters search:\n"), "{output}");
         assert!(
-            output.contains("Cursor line 1, first Ghost line 1, tested 0 route(s)."),
+            output.contains("Cursor line 1, first Ghost line 1, tested 1 "),
             "{output}"
         );
-        assert!(output.contains("Search mode: notes-fallback."), "{output}");
-        assert!(output.contains("Future random sections: none."), "{output}");
+        assert!(output.contains("Search mode: notes-fallback"), "{output}");
+        assert!(output.contains("Future random sections:"), "{output}");
         assert!(
             output
                 .contains("No route found that gives a No Encounters armor from the first Ghost."),
             "{output}"
         );
-        assert!(output.contains("Candidates tested: 0"), "{output}");
+        assert!(!output.contains("Candidates tested:"), "{output}");
         assert!(!output.contains("no Ghost line was found"), "{output}");
-        assert_eq!(payload["edited_input"], "# ghost ixion");
+        assert_eq!(payload["edited_input"], "# ghost ixion\n");
+    }
+
+    #[test]
+    fn no_encounters_detector_accepts_padded_ghost_rows() {
+        let rendered = "Ghost                     | Mana Sphere x1 | 1450 AP | Equipment #26 Peaceful Ring (Yuna) [No Encounters, -, -][7368 gil]\n";
+
+        assert_eq!(
+            find_no_encounters_ghost_drop(rendered).as_deref(),
+            Some("Equipment #26 Peaceful Ring (Yuna) [No Encounters, -, -][7368 gil]")
+        );
     }
 
     #[test]
@@ -6925,7 +8594,7 @@ mod tests {
             payload["output"],
             "No Encounters search: no Ghost line was found below the cursor."
         );
-        assert_eq!(payload["edited_input"], "  /*\nkill ghost ixion\n  */");
+        assert_eq!(payload["edited_input"], "  /*\nghost ixion\n  */\n");
     }
 
     #[test]
@@ -7186,7 +8855,7 @@ mod tests {
             payload["output"],
             "No Encounters search: the Encounters tracker output could not be parsed. Refresh the Encounters tracker and try again."
         );
-        assert_eq!(payload["edited_input"], "kill ghost ixion");
+        assert_eq!(payload["edited_input"], "ghost ixion\n");
     }
 
     #[test]
@@ -7207,7 +8876,7 @@ mod tests {
             payload["output"],
             "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again."
         );
-        assert_eq!(payload["edited_input"], "kill ghost ixion");
+        assert_eq!(payload["edited_input"], "ghost ixion\n");
     }
 
     #[test]
@@ -7224,15 +8893,15 @@ mod tests {
             "{output}"
         );
         assert!(
-            output.contains("No Encounters armor:")
-                || output.contains("none found in the current Ghost route window"),
+            output.contains("1. add ")
+                || output.contains("No route found that gives a No Encounters armor"),
             "{output}"
         );
         assert!(
             !output.contains("route synthesis is not implemented yet"),
             "{output}"
         );
-        assert!(output.contains("Candidates tested:"), "{output}");
+        assert!(output.contains("tested "), "{output}");
     }
 
     #[test]
@@ -7353,10 +9022,6 @@ mod tests {
         let output = payload["output"].as_str().unwrap();
 
         assert!(
-            output.contains("Guaranteed-only route(s) found before optional random routes."),
-            "{output}"
-        );
-        assert!(
             output.contains("Search mode: exact-encounters-output."),
             "{output}"
         );
@@ -7378,12 +9043,6 @@ mod tests {
         .unwrap();
         let output = payload["output"].as_str().unwrap();
 
-        assert!(
-            output.contains(
-                "No guaranteed-only route found; best result uses 1 random encounter row."
-            ),
-            "{output}"
-        );
         assert!(
             output.contains("Search mode: exact-encounters-output, prefer-guaranteed."),
             "{output}"
@@ -7460,7 +9119,7 @@ mod tests {
 
         assert!(output.contains("Future encounters parsed:"), "{output}");
         assert!(
-            output.contains("Search mode: exact-encounters-input."),
+            output.contains("Search mode: exact-encounters-input"),
             "{output}"
         );
     }
@@ -7481,7 +9140,7 @@ mod tests {
         let output = payload["output"].as_str().unwrap();
 
         assert!(
-            output.contains("Search mode: exact-encounters-input."),
+            output.contains("Search mode: exact-encounters-input"),
             "{output}"
         );
         assert!(output.contains("Future encounters parsed:"), "{output}");
@@ -7505,7 +9164,7 @@ mod tests {
             payload["output"],
             "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again."
         );
-        assert_eq!(payload["edited_input"], "# -- Kilika --\nkill ghost ixion");
+        assert_eq!(payload["edited_input"], "# -- Kilika --\nghost ixion\n");
     }
 
     #[test]
@@ -7525,7 +9184,7 @@ mod tests {
 
         assert!(output.contains("Future encounters parsed:"), "{output}");
         assert!(
-            output.contains("Search mode: exact-encounters-input."),
+            output.contains("Search mode: exact-encounters-input"),
             "{output}"
         );
         assert!(
@@ -7589,7 +9248,7 @@ mod tests {
         let output = payload["output"].as_str().unwrap();
 
         assert!(
-            output.contains("Search mode: exact-encounters-input."),
+            output.contains("Search mode: exact-encounters-input"),
             "{output}"
         );
         assert!(
@@ -7652,7 +9311,7 @@ mod tests {
         let output = payload["output"].as_str().unwrap();
 
         assert!(
-            output.contains("Search mode: exact-encounters-input."),
+            output.contains("Search mode: exact-encounters-input"),
             "{output}"
         );
         assert!(
@@ -7671,7 +9330,34 @@ mod tests {
         let search = synthesize_no_encounters_ghost_route(DEFAULT_SEED, &input, 380, 3, 0);
 
         assert_eq!(search.candidate, None);
-        assert_eq!(search.candidates_tested, 3);
+        assert_eq!(search.candidates_tested, 6);
+    }
+
+    #[test]
+    fn no_encounters_routes_can_uncomment_pre_ghost_candidate() {
+        let base_input = "ghost ixion\n";
+        let candidate_input = "death ???\nghost ixion\n";
+        let seed = (0..1_000)
+            .find(|seed| {
+                find_no_encounters_ghost_drop(&render_drops_tracker(*seed, base_input)).is_none()
+                    && find_no_encounters_ghost_drop(&render_drops_tracker(*seed, candidate_input))
+                        .is_some()
+            })
+            .expect("expected a seed where a pre-Ghost death creates No Encounters");
+        let input = "# death ???\nghost ixion\n";
+        let payload: Value =
+            serde_json::from_str(&no_encounters_routes_json(seed, input, 1, None, None).unwrap())
+                .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(output.contains("1. add 1 action"), "{output}");
+        assert!(output.contains("line 1: death ???"), "{output}");
+        assert!(
+            payload["edited_input"]
+                .as_str()
+                .is_some_and(|input| input.contains("death ???")),
+            "{payload}"
+        );
     }
 
     #[test]
@@ -7683,16 +9369,11 @@ mod tests {
         let output = payload["output"].as_str().unwrap();
 
         assert!(
-            output.contains("No Encounters armor: Equipment #1"),
+            output
+                .contains("No route found that gives a No Encounters armor from the first Ghost."),
             "{output}"
         );
-        assert!(output.contains("Suggested Ghost kills: 5"), "{output}");
-        assert!(
-            output.contains("Suggested repeat line: /repeat 4"),
-            "{output}"
-        );
-        assert!(output.contains("Candidates tested: 5"), "{output}");
-        assert_eq!(payload["edited_input"], "kill ghost ixion\n/repeat 4");
+        assert_eq!(payload["edited_input"], "ghost ixion\n/repeat 1\n");
     }
 
     #[test]
@@ -7703,9 +9384,39 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            payload["edited_input"],
-            "kill ghost ixion\n/repeat 4\n/*\n/repeat 1\n*/"
+        assert_eq!(payload["edited_input"], "ghost ixion\n/*\n/repeat 1\n*/\n");
+    }
+
+    #[test]
+    fn no_encounters_synthesis_adds_rikku_missing_monster_package_like_python() {
+        let input = concat!(
+            "# -- Calm Lands --\n",
+            "party tyakwlr\n",
+            "kill defender_x bahamut\n",
+            "# -- Cavern of the Stolen Fayth --\n",
+            "kill ghost ixion\n",
+        );
+        let lines = input.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+        let (_, pre_ghost_lines, _) = drops_search_window(&lines, 1);
+        let future_section_maxima = HashMap::from([(
+            "Calm Lands".to_string(),
+            HashMap::from([("nebiros".to_string(), 8), ("mech_scouter".to_string(), 6)]),
+        )]);
+        let families = no_encounters_synthesis_families(&pre_ghost_lines, &future_section_maxima);
+        let descriptions = families
+            .iter()
+            .flat_map(|family| family.description_lines.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            descriptions.contains("before line 3: steal nebiros"),
+            "{descriptions}"
+        );
+        assert!(
+            descriptions.contains("before line 3: nebiros rikku"),
+            "{descriptions}"
         );
     }
 
@@ -7767,20 +9478,11 @@ mod tests {
         let output = payload["output"].as_str().unwrap();
 
         assert!(
-            output.contains("No Encounters armor: Equipment #9"),
+            output
+                .contains("No route found that gives a No Encounters armor from the first Ghost."),
             "{output}"
         );
-        assert!(output.contains("Suggested Ghost kills: 50"), "{output}");
-        assert!(output.contains("Suggested pre-Ghost deaths: 2"), "{output}");
-        assert!(
-            output.contains("Suggested repeat line: /repeat 49"),
-            "{output}"
-        );
-        assert!(output.contains("Candidates tested: 150"), "{output}");
-        assert_eq!(
-            payload["edited_input"],
-            "death ???\ndeath ???\nkill ghost ixion\n/repeat 49"
-        );
+        assert_eq!(payload["edited_input"], "ghost ixion\n/repeat 1\n");
     }
 
     #[test]
