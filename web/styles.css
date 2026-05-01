@@ -223,11 +223,11 @@ h2 {
 }
 
 .app-shell[data-visible-count="2"] {
-  grid-template-columns: repeat(2, minmax(360px, 1fr));
+  grid-template-columns: minmax(260px, var(--section-left, 50%)) 8px minmax(260px, 1fr);
 }
 
 .app-shell[data-visible-count="3"] {
-  grid-template-columns: repeat(3, minmax(320px, 1fr));
+  grid-template-columns: minmax(240px, var(--section-one, 34%)) 8px minmax(240px, var(--section-two, 33%)) 8px minmax(240px, 1fr);
 }
 
 .app-shell[data-visible-count="2"] > .is-visible,
@@ -242,36 +242,36 @@ h2 {
 
 .app-shell[data-visible-count="2"] > .visible-index-2,
 .app-shell[data-visible-count="3"] > .visible-index-2 {
-  grid-column: 2;
-}
-
-.app-shell[data-visible-count="3"] > .visible-index-3 {
   grid-column: 3;
 }
 
+.app-shell[data-visible-count="3"] > .visible-index-3 {
+  grid-column: 5;
+}
+
 .app-shell[data-ctb-visible="true"][data-tracker-pair="true"] {
-  grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, var(--section-left, 50%)) 8px minmax(280px, 1fr);
+  grid-template-rows: auto minmax(0, var(--tracker-stack-top, 50%)) 8px minmax(0, 1fr);
 }
 
 .app-shell[data-ctb-visible="true"][data-tracker-pair="true"] > [data-mode-panel="ctb"].is-visible {
   grid-column: 1;
-  grid-row: 2 / 4;
+  grid-row: 2 / 5;
 }
 
 .app-shell[data-ctb-visible="true"][data-tracker-pair="true"] > [data-mode-panel="drops"].is-visible {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 2;
 }
 
 .app-shell[data-ctb-visible="true"][data-tracker-pair="true"] > [data-mode-panel="encounters"].is-visible {
-  grid-column: 2;
-  grid-row: 3;
+  grid-column: 3;
+  grid-row: 4;
 }
 
 .app-shell[data-ctb-visible="false"][data-tracker-pair="true"] {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, var(--tracker-stack-top, 50%)) 8px minmax(0, 1fr);
 }
 
 .app-shell[data-ctb-visible="false"][data-tracker-pair="true"] > [data-mode-panel="drops"].is-visible,
@@ -284,7 +284,60 @@ h2 {
 }
 
 .app-shell[data-ctb-visible="false"][data-tracker-pair="true"] > [data-mode-panel="encounters"].is-visible {
+  grid-row: 4;
+}
+
+.section-resize {
+  display: none;
+  min-width: 0;
+  min-height: 0;
+  background: linear-gradient(90deg, transparent 0 3px, var(--line) 3px 5px, transparent 5px 8px);
+  touch-action: none;
+}
+
+.section-resize-columns {
+  cursor: col-resize;
+}
+
+.section-resize-rows {
+  cursor: row-resize;
+  background: linear-gradient(180deg, transparent 0 3px, var(--line) 3px 5px, transparent 5px 8px);
+}
+
+.app-shell[data-visible-count="2"] > .section-resize-columns {
+  display: block;
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.app-shell[data-visible-count="3"]:not([data-tracker-pair="true"]) > .section-resize-columns {
+  display: block;
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.app-shell[data-visible-count="3"]:not([data-tracker-pair="true"]) > .section-resize-rows {
+  display: block;
+  grid-column: 4;
+  grid-row: 2;
+  cursor: col-resize;
+  background: linear-gradient(90deg, transparent 0 3px, var(--line) 3px 5px, transparent 5px 8px);
+}
+
+.app-shell[data-tracker-pair="true"] > .section-resize-rows {
+  display: block;
+  grid-column: 1;
   grid-row: 3;
+}
+
+.app-shell[data-ctb-visible="true"][data-tracker-pair="true"] > .section-resize-columns {
+  display: block;
+  grid-column: 2;
+  grid-row: 2 / 5;
+}
+
+.app-shell[data-ctb-visible="true"][data-tracker-pair="true"] > .section-resize-rows {
+  grid-column: 3;
 }
 
 .input-side,
@@ -774,6 +827,10 @@ pre {
     grid-row: 2;
     cursor: row-resize;
     background: linear-gradient(180deg, transparent 0 3px, var(--line) 3px 5px, transparent 5px 8px);
+  }
+
+  .section-resize {
+    display: none !important;
   }
 
   .input-side {

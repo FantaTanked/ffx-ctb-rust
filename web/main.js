@@ -41,7 +41,7 @@ const trackerPanes = {
   },
 };
 
-const APP_BUILD_ID = "ctb-tracker-render-20260501-266";
+const APP_BUILD_ID = "ctb-tracker-render-20260501-268";
 const WORKSPACE_STORAGE_KEY = "ffxCtbRustWorkspace.v1";
 const AUTO_RENDER_DELAY_MS = 450;
 let lastRendered = null;
@@ -1125,6 +1125,9 @@ function replaceLineRange(startLine, endLine, text) {
 }
 
 function setupResizeHandles() {
+  document.querySelectorAll("[data-section-resize]").forEach((handle) => {
+    handle.addEventListener("pointerdown", (event) => startSectionResize(event, handle.dataset.sectionResize));
+  });
   document.querySelectorAll(".main-resize").forEach((handle) => {
     handle.addEventListener("pointerdown", (event) => startSplitResize(event, handle.closest(".workspace"), "--input-column", "--input-row"));
   });
@@ -1150,6 +1153,45 @@ function startSplitResize(event, container, columnVar, rowVar) {
     }
     saveWorkspaceCache();
   };
+  const onUp = () => {
+    handle.releasePointerCapture?.(event.pointerId);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  onMove(event);
+}
+
+function startSectionResize(event, mode) {
+  event.preventDefault();
+  const handle = event.currentTarget;
+  handle.setPointerCapture?.(event.pointerId);
+  const rect = appShell.getBoundingClientRect();
+  const visibleCount = Number.parseInt(appShell.dataset.visibleCount || "1", 10);
+  const trackerPair = appShell.dataset.trackerPair === "true";
+
+  const onMove = (moveEvent) => {
+    if (mode === "columns") {
+      const percent = clamp(((moveEvent.clientX - rect.left) / rect.width) * 100, 18, 82);
+      if (visibleCount === 3 && !trackerPair) {
+        appShell.style.setProperty("--section-one", `${percent}%`);
+      } else {
+        appShell.style.setProperty("--section-left", `${percent}%`);
+      }
+    } else if (visibleCount === 3 && !trackerPair) {
+      const first = parseFloat(appShell.style.getPropertyValue("--section-one")) || 34;
+      const second = clamp(((moveEvent.clientX - rect.left) / rect.width) * 100 - first, 18, 82 - first);
+      appShell.style.setProperty("--section-two", `${second}%`);
+    } else {
+      const contentTop = rect.top + (document.querySelector(".topbar")?.offsetHeight || 0);
+      const contentHeight = Math.max(1, rect.bottom - contentTop);
+      const percent = clamp(((moveEvent.clientY - contentTop) / contentHeight) * 100, 18, 82);
+      appShell.style.setProperty("--tracker-stack-top", `${percent}%`);
+    }
+    saveWorkspaceCache();
+  };
+
   const onUp = () => {
     handle.releasePointerCapture?.(event.pointerId);
     window.removeEventListener("pointermove", onMove);
@@ -1221,6 +1263,12 @@ function currentLayoutState() {
       inputColumn: workspace?.style.getPropertyValue("--input-column") || "",
       inputRow: workspace?.style.getPropertyValue("--input-row") || "",
     },
+    sections: {
+      sectionLeft: appShell.style.getPropertyValue("--section-left") || "",
+      sectionOne: appShell.style.getPropertyValue("--section-one") || "",
+      sectionTwo: appShell.style.getPropertyValue("--section-two") || "",
+      trackerStackTop: appShell.style.getPropertyValue("--tracker-stack-top") || "",
+    },
     trackerBodies,
   };
 }
@@ -1235,6 +1283,12 @@ function restoreLayoutState(layout) {
   if (workspace && layout.workspace) {
     setOptionalStyleProperty(workspace, "--input-column", layout.workspace.inputColumn);
     setOptionalStyleProperty(workspace, "--input-row", layout.workspace.inputRow);
+  }
+  if (layout.sections) {
+    setOptionalStyleProperty(appShell, "--section-left", layout.sections.sectionLeft);
+    setOptionalStyleProperty(appShell, "--section-one", layout.sections.sectionOne);
+    setOptionalStyleProperty(appShell, "--section-two", layout.sections.sectionTwo);
+    setOptionalStyleProperty(appShell, "--tracker-stack-top", layout.sections.trackerStackTop);
   }
   for (const [name, pane] of Object.entries(trackerPanes)) {
     const body = pane.input.closest(".tracker-body");
