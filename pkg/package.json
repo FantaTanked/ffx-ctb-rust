@@ -1,0 +1,17 @@
+{
+  "name": "ffx-ctb-rust",
+  "type": "module",
+  "description": "Rust/WASM port of the FFX CTB live editor engine",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "ffx_ctb_rust_bg.wasm",
+    "ffx_ctb_rust.js",
+    "ffx_ctb_rust.d.ts"
+  ],
+  "main": "ffx_ctb_rust.js",
+  "types": "ffx_ctb_rust.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
