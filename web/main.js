@@ -35,13 +35,14 @@ const trackerPanes = {
     output: document.querySelector("#encountersTrackerOutput"),
     open: document.querySelector("#openEncountersTracker"),
     save: document.querySelector("#saveEncountersTracker"),
+    saveCsv: document.querySelector("#saveEncountersCsv"),
     load: document.querySelector("#loadEncountersTracker"),
     sliders: document.querySelector("#encounterSliders"),
     sliderData: [],
   },
 };
 
-const APP_BUILD_ID = "ctb-tracker-render-20260501-263";
+const APP_BUILD_ID = "ctb-tracker-render-20260501-264";
 const WORKSPACE_STORAGE_KEY = "ffxCtbRustWorkspace.v1";
 const AUTO_RENDER_DELAY_MS = 450;
 let lastRendered = null;
@@ -128,6 +129,7 @@ encounterSelect.addEventListener("change", () => {
 Object.entries(trackerPanes).forEach(([tracker, pane]) => {
   pane.open?.addEventListener("click", () => openTextFileFor(tracker));
   pane.save?.addEventListener("click", () => saveTrackerInput(tracker));
+  pane.saveCsv?.addEventListener("click", () => saveEncountersCsv());
   pane.load.addEventListener("click", () => loadTrackerDefault(tracker));
   pane.input.addEventListener("input", () => {
     saveWorkspaceCache();
@@ -384,10 +386,15 @@ function openTextFileFor(target) {
 async function loadTextFileIntoTarget(target, text) {
   if (target === "drops" || target === "encounters") {
     const pane = trackerPanes[target];
-    pane.input.value = text;
     if (target === "encounters") {
-      await hydrateEncounterSlidersFromDefaults();
-      syncEncounterSliderControlsToInput(pane);
+      const loadedCsv = await loadEncountersCsvIfPresent(text);
+      if (!loadedCsv) {
+        pane.input.value = text;
+        await hydrateEncounterSlidersFromDefaults();
+        syncEncounterSliderControlsToInput(pane);
+      }
+    } else {
+      pane.input.value = text;
     }
     saveWorkspaceCache();
     await renderTracker(target);
@@ -404,6 +411,109 @@ function saveTrackerInput(tracker) {
   const pane = trackerPanes[tracker];
   const filename = tracker === "encounters" ? "encounters_input.txt" : "drops_input.txt";
   downloadText(filename, pane.input.value);
+}
+
+async function loadEncountersCsvIfPresent(text) {
+  if (!looksLikeEncountersCsv(text)) return false;
+  const pane = trackerPanes.encounters;
+  const sliders = parseEncounterSliderCsv(text);
+  if (!sliders.length) return false;
+  pane.sliderData = sliders;
+  renderEncounterSliderControls(pane);
+  pane.input.value = buildEncountersInputFromControls(pane);
+  return true;
+}
+
+function looksLikeEncountersCsv(text) {
+  const firstDataLine = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("#"));
+  if (!firstDataLine) return false;
+  const fields = parseCsvLine(firstDataLine);
+  return fields.length >= 6 && fields[1] && fields[3] !== undefined && fields[4] !== undefined && fields[5] !== undefined;
+}
+
+function parseEncounterSliderCsv(text) {
+  return text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line, index) => {
+      const fields = parseCsvLine(line);
+      const name = fields[0] || "";
+      const label = fields[2] || name;
+      return {
+        index,
+        name,
+        initiative: /^true$/i.test(fields[1] || ""),
+        label,
+        min: parseIntegerField(fields[3], 0),
+        default: parseIntegerField(fields[4], 0),
+        max: parseIntegerField(fields[5], 0),
+      };
+    })
+    .filter((slider) => slider.name);
+}
+
+function parseCsvLine(line) {
+  const fields = [];
+  let field = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (character === "," && !quoted) {
+      fields.push(field.trim());
+      field = "";
+    } else {
+      field += character;
+    }
+  }
+  fields.push(field.trim());
+  return fields;
+}
+
+function parseIntegerField(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function saveEncountersCsv() {
+  const pane = trackerPanes.encounters;
+  if (!pane.sliderData.length) return;
+  const counts = currentEncounterSliderCounts(pane);
+  const lines = ["#name or zone,initiative (true or false),label (optional),min,default,max"];
+  pane.sliderData.forEach((slider) => {
+    const value = counts.get(slider.index) ?? slider.default;
+    lines.push([
+      csvEscape(slider.name),
+      slider.initiative ? "true" : "false",
+      slider.label === slider.name ? "" : csvEscape(slider.label),
+      slider.min,
+      value,
+      slider.max,
+    ].join(","));
+  });
+  downloadText("encounters_notes.csv", `${lines.join("\n")}\n`, "text/csv;charset=utf-8");
+}
+
+function currentEncounterSliderCounts(pane) {
+  const counts = new Map();
+  pane.sliders.querySelectorAll("input[type='range']").forEach((slider) => {
+    counts.set(Number.parseInt(slider.dataset.index, 10), Number.parseInt(slider.value, 10));
+  });
+  return counts;
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 const ALLY_OUTPUT_ACTORS = new Set([
@@ -1055,8 +1165,8 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-function downloadText(filename, text) {
-  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+function downloadText(filename, text, mimeType = "text/plain;charset=utf-8") {
+  const blob = new Blob([text], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
