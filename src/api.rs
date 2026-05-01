@@ -6197,7 +6197,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &party_json(
                 DEFAULT_SEED,
-                "/macro moonflow grid\nparty tw\nstatus atb\n",
+                "/macro moonflow grid\nparty tw\nstatus ctb\n",
                 3,
             )
             .unwrap(),
@@ -6227,7 +6227,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &chocobo_action_json(
                 DEFAULT_SEED,
-                "encounter chocobo_eater\nstatus atb\n",
+                "encounter chocobo_eater\nstatus ctb\n",
                 2,
                 "generic_attack",
                 None,
@@ -6249,7 +6249,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &chocobo_action_json(
                 DEFAULT_SEED,
-                "encounter chocobo_eater\n/*\ntidus haste chocobo_eater\n*/\nstatus atb\n",
+                "encounter chocobo_eater\n/*\ntidus haste chocobo_eater\n*/\nstatus ctb\n",
                 2,
                 "generic_attack",
                 None,
@@ -6265,7 +6265,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &chocobo_action_json(
                 DEFAULT_SEED,
-                "encounter chocobo_eater\nstatus atb\n",
+                "encounter chocobo_eater\nstatus ctb\n",
                 3,
                 "generic_attack",
                 None,
@@ -6293,7 +6293,7 @@ mod tests {
     fn chocobo_action_payload_rejects_other_encounters() {
         let error = chocobo_action_json(
             DEFAULT_SEED,
-            "encounter tanker\nstatus atb\n",
+            "encounter tanker\nstatus ctb\n",
             2,
             "generic_attack",
             None,
@@ -6306,7 +6306,7 @@ mod tests {
     fn chocobo_action_payload_rejects_cursor_before_first_encounter() {
         let error = chocobo_action_json(
             DEFAULT_SEED,
-            "# route heading\nencounter chocobo_eater\nstatus atb\n",
+            "# route heading\nencounter chocobo_eater\nstatus ctb\n",
             1,
             "generic_attack",
             None,
@@ -6319,7 +6319,7 @@ mod tests {
     fn chocobo_action_payload_requires_active_encounter_state_like_python() {
         let error = chocobo_action_json(
             DEFAULT_SEED,
-            "encounter chocobo_eater\nstatus atb\n",
+            "encounter chocobo_eater\nstatus ctb\n",
             1,
             "generic_attack",
             None,
@@ -6333,7 +6333,7 @@ mod tests {
     #[test]
     fn tanker_pattern_payload_builds_python_lines() {
         let payload: Value = serde_json::from_str(
-            &tanker_pattern_json("encounter tanker\nstatus atb\n", 2, "awsdn-").unwrap(),
+            &tanker_pattern_json("encounter tanker\nstatus ctb\n", 2, "awsdn-").unwrap(),
         )
         .unwrap();
         assert_eq!(payload["start_line"], 2);
@@ -6382,13 +6382,13 @@ mod tests {
     #[test]
     fn tanker_pattern_payload_rejects_other_encounters() {
         let error =
-            tanker_pattern_json("encounter chocobo_eater\nstatus atb\n", 2, "aa").unwrap_err();
+            tanker_pattern_json("encounter chocobo_eater\nstatus ctb\n", 2, "aa").unwrap_err();
         assert!(error.to_string().contains("tanker encounter"));
     }
 
     #[test]
     fn tanker_pattern_payload_rejects_cursor_before_first_encounter() {
-        let error = tanker_pattern_json("# route heading\nencounter tanker\nstatus atb\n", 1, "aa")
+        let error = tanker_pattern_json("# route heading\nencounter tanker\nstatus ctb\n", 1, "aa")
             .unwrap_err();
         assert!(error.to_string().contains("tanker encounter"));
     }
@@ -6397,7 +6397,7 @@ mod tests {
     fn tanker_pattern_payload_replaces_existing_tanker_slots() {
         let payload: Value = serde_json::from_str(
             &tanker_pattern_json(
-                "encounter tanker\n# note\nm5 attack\nm7 attack\nstatus atb\nm8 attack\n",
+                "encounter tanker\n# note\nm5 attack\nm7 attack\nstatus ctb\nm8 attack\n",
                 4,
                 "aa",
             )
@@ -6411,7 +6411,7 @@ mod tests {
     #[test]
     fn tros_attack_payload_replaces_existing_first_attack_like_python_frontend() {
         let payload: Value = serde_json::from_str(
-            &tros_attack_json("encounter tros\nstatus atb\nm1 attack\n", 3, "tentacles").unwrap(),
+            &tros_attack_json("encounter tros\nstatus ctb\nm1 attack\n", 3, "tentacles").unwrap(),
         )
         .unwrap();
         assert_eq!(payload["start_line"], 3);
@@ -6422,7 +6422,7 @@ mod tests {
     #[test]
     fn tros_attack_payload_inserts_at_cursor_when_missing_like_python_frontend() {
         let payload: Value = serde_json::from_str(
-            &tros_attack_json("encounter tros\nstatus atb\n", 2, "attack").unwrap(),
+            &tros_attack_json("encounter tros\nstatus ctb\n", 2, "attack").unwrap(),
         )
         .unwrap();
         assert_eq!(payload["start_line"], 2);
@@ -6434,7 +6434,7 @@ mod tests {
     fn tros_attack_payload_ignores_block_commented_first_attack() {
         let payload: Value = serde_json::from_str(
             &tros_attack_json(
-                "encounter tros\n/*\nm1 tentacles\n*/\nstatus atb\n",
+                "encounter tros\n/*\nm1 tentacles\n*/\nstatus ctb\n",
                 5,
                 "attack",
             )
@@ -6447,7 +6447,7 @@ mod tests {
 
     #[test]
     fn tros_attack_payload_rejects_invalid_context_or_attack() {
-        let error = tros_attack_json("encounter tanker\nstatus atb\n", 2, "attack").unwrap_err();
+        let error = tros_attack_json("encounter tanker\nstatus ctb\n", 2, "attack").unwrap_err();
         assert!(error.to_string().contains("tros encounter"));
 
         let error = tros_attack_json("encounter tros\n", 1, "sonic_boom").unwrap_err();
@@ -6487,7 +6487,7 @@ mod tests {
     fn garuda1_attacks_payload_inserts_at_cursor_when_missing() {
         let payload: Value = serde_json::from_str(
             &garuda1_attacks_json(
-                "encounter garuda_1\nstatus atb\n",
+                "encounter garuda_1\nstatus ctb\n",
                 2,
                 "attack,attack,sonic_boom,attack,sonic_boom",
             )
@@ -6512,7 +6512,7 @@ mod tests {
     fn garuda1_attacks_payload_ignores_block_commented_rows() {
         let payload: Value = serde_json::from_str(
             &garuda1_attacks_json(
-                "encounter garuda_1\n/*\nm1 attack\n*/\nstatus atb\n",
+                "encounter garuda_1\n/*\nm1 attack\n*/\nstatus ctb\n",
                 5,
                 "attack,attack,attack,attack,attack",
             )
@@ -6526,7 +6526,7 @@ mod tests {
     #[test]
     fn garuda1_attacks_payload_rejects_invalid_context_or_actions() {
         let error = garuda1_attacks_json(
-            "encounter garuda_2\nstatus atb\n",
+            "encounter garuda_2\nstatus ctb\n",
             2,
             "attack,attack,attack,attack,attack",
         )
@@ -6563,7 +6563,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &garuda2_attack_json(
                 DEFAULT_SEED,
-                "encounter garuda_2\nm1 sonic_boom\nstatus atb\n",
+                "encounter garuda_2\nm1 sonic_boom\nstatus ctb\n",
                 2,
                 "does_nothing",
             )
@@ -6572,7 +6572,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             payload["lines"],
-            serde_json::json!(["encounter garuda_2", "status atb"])
+            serde_json::json!(["encounter garuda_2", "status ctb"])
         );
     }
 
@@ -6581,7 +6581,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &garuda2_attack_json(
                 DEFAULT_SEED,
-                "encounter garuda_2\nstatus atb\n",
+                "encounter garuda_2\nstatus ctb\n",
                 2,
                 "does_nothing",
             )
@@ -6615,7 +6615,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &garuda2_attack_json(
                 DEFAULT_SEED,
-                "encounter garuda_2\nstatus atb\n",
+                "encounter garuda_2\nstatus ctb\n",
                 2,
                 "sonic_boom",
             )
@@ -6719,7 +6719,7 @@ mod tests {
     #[test]
     fn tanker_pattern_payload_ignores_block_commented_tanker_slots() {
         let payload: Value = serde_json::from_str(
-            &tanker_pattern_json("encounter tanker\n/*\nm5 attack\n*/\nstatus atb\n", 5, "aa")
+            &tanker_pattern_json("encounter tanker\n/*\nm5 attack\n*/\nstatus ctb\n", 5, "aa")
                 .unwrap(),
         )
         .unwrap();
@@ -6731,7 +6731,7 @@ mod tests {
     fn tanker_pattern_payload_keeps_block_comment_open_until_trailing_marker_like_python() {
         let payload: Value = serde_json::from_str(
             &tanker_pattern_json(
-                "encounter tanker\n/* m5 attack */ trailing text\nm5 attack\nnote */\nstatus atb\n",
+                "encounter tanker\n/* m5 attack */ trailing text\nm5 attack\nnote */\nstatus ctb\n",
                 5,
                 "aa",
             )
@@ -6745,7 +6745,7 @@ mod tests {
     #[test]
     fn tanker_pattern_payload_accepts_trailing_blank_line_inside_last_encounter() {
         let payload: Value = serde_json::from_str(
-            &tanker_pattern_json("encounter tanker\nstatus atb\n", 3, "aa").unwrap(),
+            &tanker_pattern_json("encounter tanker\nstatus ctb\n", 3, "aa").unwrap(),
         )
         .unwrap();
         assert_eq!(payload["start_line"], 3);
@@ -6830,14 +6830,14 @@ mod tests {
             .copied()
             .expect("Wakka shadow CTB should be tracked after swapping out");
 
-        cursor_state.apply_line("status atb");
+        cursor_state.apply_line("status ctb");
 
         let after_status = cursor_state
             .shadow_ctbs
             .as_ref()
             .and_then(|shadow| shadow.get(&crate::model::Character::Wakka))
             .copied()
-            .expect("Wakka shadow CTB should remain tracked after status atb");
+            .expect("Wakka shadow CTB should remain tracked after status ctb");
         assert_eq!(after_status, before_status);
     }
 
@@ -6857,7 +6857,7 @@ mod tests {
 
         let cursor_state = simulate_to_chocobo_cursor_state(
             DEFAULT_SEED,
-            "encounter chocobo_eater\nparty taw\nparty ta\ntidus defend\n  /*\ntidus defend\n  */\nstatus atb\n",
+            "encounter chocobo_eater\nparty taw\nparty ta\ntidus defend\n  /*\ntidus defend\n  */\nstatus ctb\n",
             8,
         );
         let actual = cursor_state
@@ -6887,7 +6887,7 @@ mod tests {
 
         let cursor_state = simulate_to_chocobo_cursor_state(
             DEFAULT_SEED,
-            "encounter chocobo_eater\nparty taw\nparty ta\ntidus defend\n/*\ntidus defend\nnote */\ntidus defend\nstatus atb\n",
+            "encounter chocobo_eater\nparty taw\nparty ta\ntidus defend\n/*\ntidus defend\nnote */\ntidus defend\nstatus ctb\n",
             9,
         );
         let actual = cursor_state
@@ -6904,7 +6904,7 @@ mod tests {
     fn chocobo_cursor_replay_infers_encounter_party_from_character_rows_like_python() {
         let cursor_state = simulate_to_chocobo_cursor_state(
             DEFAULT_SEED,
-            "encounter chocobo_eater\ntidus defend\nlulu defend\nstatus atb\n",
+            "encounter chocobo_eater\ntidus defend\nlulu defend\nstatus ctb\n",
             4,
         );
         assert_eq!(
@@ -6920,7 +6920,7 @@ mod tests {
     fn chocobo_cursor_replay_prefers_explicit_party_swaps_over_inferred_rows_like_python() {
         let cursor_state = simulate_to_chocobo_cursor_state(
             DEFAULT_SEED,
-            "encounter chocobo_eater\nlulu defend\nparty ta\nstatus atb\n",
+            "encounter chocobo_eater\nlulu defend\nparty ta\nstatus ctb\n",
             3,
         );
         assert_eq!(
@@ -6974,7 +6974,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &chocobo_swap_json(
                 DEFAULT_SEED,
-                "encounter chocobo_eater\nstatus atb\n",
+                "encounter chocobo_eater\nstatus ctb\n",
                 2,
                 1,
                 "wakka",
@@ -6991,7 +6991,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &chocobo_swap_json(
                 DEFAULT_SEED,
-                "encounter chocobo_eater\ntidus haste chocobo_eater\nstatus atb\n",
+                "encounter chocobo_eater\ntidus haste chocobo_eater\nstatus ctb\n",
                 2,
                 1,
                 "wakka",
@@ -7007,7 +7007,7 @@ mod tests {
     fn chocobo_swap_payload_rejects_current_party_members() {
         let error = chocobo_swap_json(
             DEFAULT_SEED,
-            "encounter chocobo_eater\nstatus atb\n",
+            "encounter chocobo_eater\nstatus ctb\n",
             2,
             0,
             "tidus",
@@ -7021,7 +7021,7 @@ mod tests {
         let payload: Value = serde_json::from_str(
             &chocobo_swap_json(
                 DEFAULT_SEED,
-                "encounter chocobo_eater\nstatus atb\n",
+                "encounter chocobo_eater\nstatus ctb\n",
                 1,
                 1,
                 "wakka",

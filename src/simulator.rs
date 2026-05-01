@@ -1193,11 +1193,11 @@ impl SimulationState {
                 }
             }
             ParsedCommand::Status { args }
-                if args
-                    .first()
-                    .is_some_and(|arg| arg.eq_ignore_ascii_case("atb")) =>
+                if args.first().is_some_and(|arg| {
+                    arg.eq_ignore_ascii_case("ctb") || arg.eq_ignore_ascii_case("atb")
+                }) =>
             {
-                format!("status atb\n# ATB: {}", self.available_ctb_string())
+                format!("status ctb\n# CTB: {}", self.available_ctb_string())
             }
             ParsedCommand::Status { args } => self.render_status_command(&args),
             ParsedCommand::ParserError { message } => message,
@@ -12062,14 +12062,14 @@ mod tests {
     fn simulates_encounter_party_icvs_and_atb() {
         let lines = vec![
             "encounter tanker".to_string(),
-            "status atb".to_string(),
+            "status ctb".to_string(),
             "tidus attack m1".to_string(),
         ];
         let output = simulate(1, &lines);
         assert!(output
             .text
             .contains("Encounter:   1 | Tanker | Tanker, Sinscale#6"));
-        assert!(output.text.contains("ATB:"));
+        assert!(output.text.contains("CTB:"));
         assert!(output.text.contains("tidus attack m1"));
         assert!(output.text.contains("# party rolls:"));
         assert_eq!(output.unsupported_count, 0);
@@ -12701,18 +12701,18 @@ mod tests {
                 "spawn melusine 1 0".to_string(),
                 "stat tidus ctb 10".to_string(),
                 "m1 thundara".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
                 "tidus defend".to_string(),
             ],
         );
 
         assert!(
-            output.text.contains("\nm1 thundara\nstatus atb"),
+            output.text.contains("\nm1 thundara\nstatus ctb"),
             "{}",
             output.text
         );
         assert!(
-            output.text.contains("# ATB: Au[0] M1[0] Ti[10]"),
+            output.text.contains("# CTB: Au[0] M1[0] Ti[10]"),
             "{}",
             output.text
         );
@@ -13152,17 +13152,17 @@ mod tests {
             1,
             &[
                 "status tidus sleep".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
                 "status tidus sleep 0".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
             ],
         );
 
         let lines = output.text.lines().collect::<Vec<_>>();
-        assert_eq!(lines[1], "status atb");
-        assert_eq!(lines[2], "# ATB: Au[0]");
-        assert_eq!(lines[4], "status atb");
-        assert_eq!(lines[5], "# ATB: Ti[0] Au[0]");
+        assert_eq!(lines[1], "status ctb");
+        assert_eq!(lines[2], "# CTB: Au[0]");
+        assert_eq!(lines[4], "status ctb");
+        assert_eq!(lines[5], "# CTB: Ti[0] Au[0]");
     }
 
     #[test]
@@ -13428,7 +13428,7 @@ mod tests {
             "/*".to_string(),
             "party yuna".to_string(),
             "*/".to_string(),
-            "status atb".to_string(),
+            "status ctb".to_string(),
         ];
         let output = simulate(3096296922, &lines);
         assert_eq!(output.unsupported_count, 0, "{}", output.text);
@@ -13445,7 +13445,7 @@ mod tests {
             "  /*".to_string(),
             "party yuna".to_string(),
             "  */".to_string(),
-            "status atb".to_string(),
+            "status ctb".to_string(),
         ];
         let output = simulate(3096296922, &lines);
         assert_eq!(output.unsupported_count, 0, "{}", output.text);
@@ -13828,13 +13828,13 @@ mod tests {
                 "status m1 death".to_string(),
                 "status m2 death".to_string(),
                 "status m3 death".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
                 "status m1 death".to_string(),
                 "status m2 death".to_string(),
                 "status m3 death".to_string(),
                 "status m4 death".to_string(),
                 "status m5 death".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
             ],
         );
 
@@ -13873,14 +13873,14 @@ mod tests {
             &[
                 "encounter sinscales".to_string(),
                 "# Encounter:   1 | Sinscales | Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6 Normal | Ti[41] M2[45] M5[46] M1[47] M7[47] Au[48] M6[48] M8[48] M4[49] M3[50]".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
                 "tidus attack m6".to_string(),
             ],
         );
 
         assert!(
             output.text.contains(
-                "# ATB: Ti[41] M2[45] M5[46] M1[47] M7[47] Au[48] M6[48] M8[48] M4[49] M3[50]"
+                "# CTB: Ti[41] M2[45] M5[46] M1[47] M7[47] Au[48] M6[48] M8[48] M4[49] M3[50]"
             ),
             "{}",
             output.text
@@ -13990,13 +13990,13 @@ mod tests {
                 "encounter machina_3".to_string(),
                 "status m1 death".to_string(),
                 "status m2 death".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
                 "status m1 death".to_string(),
                 "status m2 death".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
                 "status m1 death".to_string(),
                 "status m2 death".to_string(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
             ],
         );
 
@@ -14037,7 +14037,7 @@ mod tests {
                 "encounter tanker".to_string(),
                 String::new(),
                 String::new(),
-                "status atb".to_string(),
+                "status ctb".to_string(),
             ],
         );
         assert!(!output.text.contains("\n\n\n"), "{}", output.text);

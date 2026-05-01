@@ -160,9 +160,6 @@ pub fn parse_edited_action_line(edited_line: &str) -> ParsedCommand {
                 .map(|word| (*word).to_string())
                 .collect(),
         },
-        "atb" => ParsedCommand::Status {
-            args: vec!["atb".to_string()],
-        },
         "stat" => ParsedCommand::Stat {
             args: words
                 .iter()

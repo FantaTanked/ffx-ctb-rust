@@ -212,7 +212,7 @@ mod tests {
     fn render_response_uses_prepared_lines() {
         let response = render_ctb(
             3096296922,
-            "encounter tanker\nstatus atb\n/repeat 2 1\nencounter ammes",
+            "encounter tanker\nstatus ctb\n/repeat 2 1\nencounter ammes",
         );
         assert_eq!(response.prepared_line_count, 6);
         assert_eq!(response.encounters.len(), 2);
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn scans_raw_input_encounters_preserves_textarea_trailing_blank_line() {
-        let encounters = scan_encounters_from_text("encounter tanker\r\nstatus atb\r\n");
+        let encounters = scan_encounters_from_text("encounter tanker\r\nstatus ctb\r\n");
         assert_eq!(encounters[0].start_line, 1);
         assert_eq!(encounters[0].end_line, 3);
     }

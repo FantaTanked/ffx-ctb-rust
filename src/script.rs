@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn prepares_prefix_before_raw_cursor_line_like_python_editor_helpers() {
         let prepared =
-            prepare_action_lines_before_raw_line("/macro moonflow grid\nparty tw\nstatus atb", 3);
+            prepare_action_lines_before_raw_line("/macro moonflow grid\nparty tw\nstatus ctb", 3);
 
         assert_eq!(
             prepared.lines,

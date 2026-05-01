@@ -41,7 +41,7 @@ const trackerPanes = {
   },
 };
 
-const APP_BUILD_ID = "ctb-tracker-render-20260501-262";
+const APP_BUILD_ID = "ctb-tracker-render-20260501-263";
 const WORKSPACE_STORAGE_KEY = "ffxCtbRustWorkspace.v1";
 const AUTO_RENDER_DELAY_MS = 450;
 let lastRendered = null;
