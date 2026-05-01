@@ -34,7 +34,6 @@ const trackerPanes = {
     input: document.querySelector("#encountersTrackerInput"),
     output: document.querySelector("#encountersTrackerOutput"),
     open: document.querySelector("#openEncountersTracker"),
-    save: document.querySelector("#saveEncountersTracker"),
     saveCsv: document.querySelector("#saveEncountersCsv"),
     load: document.querySelector("#loadEncountersTracker"),
     sliders: document.querySelector("#encounterSliders"),
@@ -42,7 +41,7 @@ const trackerPanes = {
   },
 };
 
-const APP_BUILD_ID = "ctb-tracker-render-20260501-264";
+const APP_BUILD_ID = "ctb-tracker-render-20260501-265";
 const WORKSPACE_STORAGE_KEY = "ffxCtbRustWorkspace.v1";
 const AUTO_RENDER_DELAY_MS = 450;
 let lastRendered = null;
