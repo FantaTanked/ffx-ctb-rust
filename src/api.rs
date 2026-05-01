@@ -1,5 +1,5 @@
-use serde::Serialize;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
@@ -11,7 +11,7 @@ use crate::data::{self, EquipmentKind, ItemDrop, MonsterItemDropInfo};
 use crate::model::{Character, MonsterSlot};
 use crate::parser::{parse_raw_action_line, ParsedCommand};
 use crate::rng::FfxRngTracker;
-use crate::script::prepare_action_lines;
+use crate::script::{prepare_action_lines, prepare_action_lines_before_raw_line};
 use crate::simulator::SimulationState;
 
 pub const DEFAULT_SEED: u32 = 3_096_296_922;
@@ -106,6 +106,13 @@ struct ChocoboActionResponse {
     lines: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct TankerPatternResponse {
+    start_line: usize,
+    end_line: usize,
+    lines: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct TrackerDefaultResponse {
     tracker: String,
@@ -123,6 +130,25 @@ struct TrackerRenderResponse {
     output: String,
     duration_seconds: f64,
     output_filename: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct NoEncountersRoutesResponse {
+    output: String,
+    edited_input: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExactFutureEncounterRow {
+    encounter_options: Vec<Vec<String>>,
+    random: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExactFutureEncounterOutput {
+    rows: Vec<ExactFutureEncounterRow>,
+    total_counts: HashMap<String, usize>,
+    section_maxima: HashMap<String, HashMap<String, usize>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -219,7 +245,7 @@ pub fn sample_json() -> Result<String, ApiError> {
 
 pub fn party_json(seed: u32, input: &str, cursor_line: usize) -> Result<String, ApiError> {
     let mut state = SimulationState::new(seed);
-    state.run_until_raw_line(input, cursor_line);
+    state.run_until_prepared_line(input, cursor_line);
     let party = state.party().iter().copied().collect::<Vec<_>>();
     let reserves = party_swap_choices()
         .into_iter()
@@ -337,6 +363,490 @@ pub fn chocobo_swap_json(
     })?)
 }
 
+pub fn tanker_pattern_json(
+    input: &str,
+    cursor_line: usize,
+    pattern: &str,
+) -> Result<String, ApiError> {
+    let raw_pattern = pattern
+        .split_whitespace()
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if !(2..=14).contains(&raw_pattern.len())
+        || raw_pattern
+            .chars()
+            .any(|token| !matches!(token, 'a' | 'w' | 's' | 'd' | 'n' | '-'))
+    {
+        return Err(ApiError::BadRequest(
+            "Use 2 to 14 letters with only a, w, s, d, n, or -.".into(),
+        ));
+    }
+    let encounter = current_encounter_at_line(input, cursor_line)
+        .filter(|encounter| encounter.name == "tanker")
+        .ok_or_else(|| {
+            ApiError::BadRequest("Move the cursor into the tanker encounter first.".into())
+        })?;
+    let lines = build_tanker_lines(&raw_pattern);
+    let input_lines = input.lines().collect::<Vec<_>>();
+    let tanker_slots = ["m5", "m7", "m6", "m2", "m3", "m4", "m8"];
+    let mut matching_lines = Vec::new();
+    let end_line = encounter.end_line.min(input_lines.len());
+    let mut in_block_comment = false;
+    for line_number in encounter.start_line..=end_line {
+        let Some(line) = input_lines.get(line_number.saturating_sub(1)) else {
+            continue;
+        };
+        if !route_line_is_active(line, &mut in_block_comment) {
+            continue;
+        }
+        let token = line
+            .trim()
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if tanker_slots.contains(&token.as_str()) {
+            matching_lines.push(line_number);
+        }
+    }
+    let (start_line, end_line) = matching_lines
+        .first()
+        .zip(matching_lines.last())
+        .map(|(start, end)| (*start, *end))
+        .unwrap_or((cursor_line, cursor_line.saturating_sub(1)));
+
+    Ok(serde_json::to_string(&TankerPatternResponse {
+        start_line,
+        end_line,
+        lines,
+    })?)
+}
+
+pub fn tros_attack_json(input: &str, cursor_line: usize, attack: &str) -> Result<String, ApiError> {
+    let attack = attack.trim().to_ascii_lowercase();
+    if !matches!(attack.as_str(), "attack" | "tentacles") {
+        return Err(ApiError::BadRequest(
+            "Use attack or tentacles for the Tros first attack.".into(),
+        ));
+    }
+    let encounter = current_encounter_at_line(input, cursor_line)
+        .filter(|encounter| encounter.name == "tros")
+        .ok_or_else(|| {
+            ApiError::BadRequest("Move the cursor into the tros encounter first.".into())
+        })?;
+    let input_lines = input.lines().collect::<Vec<_>>();
+    let end_line = encounter.end_line.min(input_lines.len());
+    let mut in_block_comment = false;
+    let matching_line = (encounter.start_line..=end_line).find(|line_number| {
+        input_lines
+            .get(line_number.saturating_sub(1))
+            .is_some_and(|line| {
+                route_line_is_active(line, &mut in_block_comment)
+                    && matches!(
+                        line.trim().to_ascii_lowercase().as_str(),
+                        "m1 attack" | "m1 tentacles"
+                    )
+            })
+    });
+    let (start_line, end_line) = matching_line
+        .map(|line| (line, line))
+        .unwrap_or((cursor_line, cursor_line.saturating_sub(1)));
+
+    Ok(serde_json::to_string(&TankerPatternResponse {
+        start_line,
+        end_line,
+        lines: vec![format!("m1 {attack}")],
+    })?)
+}
+
+pub fn garuda1_attacks_json(
+    input: &str,
+    cursor_line: usize,
+    attacks: &str,
+) -> Result<String, ApiError> {
+    let attacks = attacks
+        .split(',')
+        .map(|attack| attack.trim().to_ascii_lowercase())
+        .filter(|attack| !attack.is_empty())
+        .collect::<Vec<_>>();
+    if attacks.len() != 5
+        || attacks
+            .iter()
+            .any(|attack| !matches!(attack.as_str(), "attack" | "sonic_boom"))
+    {
+        return Err(ApiError::BadRequest(
+            "Use exactly 5 Garuda 1 attacks: attack or sonic_boom.".into(),
+        ));
+    }
+    let encounter = current_encounter_at_line(input, cursor_line)
+        .filter(|encounter| encounter.name == "garuda_1")
+        .ok_or_else(|| {
+            ApiError::BadRequest("Move the cursor into the garuda_1 encounter first.".into())
+        })?;
+    let replacement_lines = attacks
+        .iter()
+        .map(|attack| format!("m1 {attack}"))
+        .collect::<Vec<_>>();
+    replace_matching_helper_lines(input, cursor_line, &encounter, &replacement_lines, |line| {
+        matches!(
+            line,
+            "m1 attack" | "m1 sonic_boom" | "#m1 attack" | "#m1 sonic_boom"
+        )
+    })
+}
+
+pub fn lancet_tutorial_timing_json(
+    input: &str,
+    cursor_line: usize,
+    timing: &str,
+) -> Result<String, ApiError> {
+    let timing = timing.trim().to_ascii_lowercase();
+    if !matches!(timing.as_str(), "before" | "after") {
+        return Err(ApiError::BadRequest(
+            "Use before or after for the Lancet Tutorial timing.".into(),
+        ));
+    }
+    let encounter = current_encounter_at_line(input, cursor_line)
+        .filter(|encounter| encounter.name == "lancet_tutorial")
+        .ok_or_else(|| {
+            ApiError::BadRequest("Move the cursor into the lancet_tutorial encounter first.".into())
+        })?;
+    let input_lines = input.lines().collect::<Vec<_>>();
+    let encounter_end = encounter.end_line.min(input_lines.len());
+    let mut in_block_comment = false;
+    let mut before_line = None;
+    let mut after_line = None;
+    for line_number in encounter.start_line..=encounter_end {
+        let Some(line) = input_lines.get(line_number.saturating_sub(1)) else {
+            continue;
+        };
+        if !route_line_is_active(line, &mut in_block_comment) {
+            continue;
+        }
+        match line.trim().to_ascii_lowercase().as_str() {
+            "m1 seed_cannon_kimahri" | "#m1 seed_cannon_kimahri" => before_line = Some(line_number),
+            "m1 seed_cannon" | "#m1 seed_cannon" => after_line = Some(line_number),
+            _ => {}
+        }
+    }
+    let (Some(before_line), Some(after_line)) = (before_line, after_line) else {
+        return Err(ApiError::BadRequest(
+            "Could not find both Ragora attack lines in the current encounter.".into(),
+        ));
+    };
+    let mut output = input_lines
+        .get(encounter.start_line.saturating_sub(1)..encounter_end)
+        .unwrap_or_default()
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect::<Vec<_>>();
+    let before_index = before_line - encounter.start_line;
+    let after_index = after_line - encounter.start_line;
+    if timing == "before" {
+        output[before_index] = "m1 seed_cannon_kimahri".to_string();
+        output[after_index] = "#m1 seed_cannon".to_string();
+    } else {
+        output[before_index] = "#m1 seed_cannon_kimahri".to_string();
+        output[after_index] = "m1 seed_cannon".to_string();
+    }
+
+    Ok(serde_json::to_string(&TankerPatternResponse {
+        start_line: encounter.start_line,
+        end_line: encounter_end,
+        lines: output,
+    })?)
+}
+
+pub fn garuda2_attack_json(
+    seed: u32,
+    input: &str,
+    cursor_line: usize,
+    attack: &str,
+) -> Result<String, ApiError> {
+    let attack = attack.trim().to_ascii_lowercase();
+    if !matches!(attack.as_str(), "attack" | "sonic_boom" | "does_nothing") {
+        return Err(ApiError::BadRequest(
+            "Use attack, sonic_boom, or does_nothing for Garuda 2.".into(),
+        ));
+    }
+    let encounter = current_encounter_at_line(input, cursor_line)
+        .filter(|encounter| encounter.name == "garuda_2")
+        .ok_or_else(|| {
+            ApiError::BadRequest("Move the cursor into the garuda_2 encounter first.".into())
+        })?;
+    let replacement_lines = if attack == "does_nothing" {
+        Vec::new()
+    } else {
+        vec![format!("m1 {attack}")]
+    };
+    let payload = replace_matching_helper_lines(
+        input,
+        cursor_line,
+        &encounter,
+        &replacement_lines,
+        |line| {
+            matches!(
+                line,
+                "m1 attack" | "m1 sonic_boom" | "#m1 attack" | "#m1 sonic_boom"
+            )
+        },
+    )?;
+    let response: TankerPatternResponse = serde_json::from_str(&payload)?;
+    if response.lines.is_empty() || response.end_line >= response.start_line {
+        return Ok(payload);
+    }
+    let insert_line = garuda2_insert_line(seed, input, &encounter);
+    Ok(serde_json::to_string(&TankerPatternResponse {
+        start_line: insert_line,
+        end_line: insert_line.saturating_sub(1),
+        lines: response.lines,
+    })?)
+}
+
+fn replace_matching_helper_lines<F>(
+    input: &str,
+    cursor_line: usize,
+    encounter: &ctb::EncounterBlock,
+    replacement_lines: &[String],
+    mut predicate: F,
+) -> Result<String, ApiError>
+where
+    F: FnMut(&str) -> bool,
+{
+    let input_lines = input.lines().collect::<Vec<_>>();
+    let encounter_end = encounter.end_line.min(input_lines.len());
+    let mut in_block_comment = false;
+    let mut matching_lines = Vec::new();
+    for line_number in encounter.start_line..=encounter_end {
+        let Some(line) = input_lines.get(line_number.saturating_sub(1)) else {
+            continue;
+        };
+        if !route_line_is_active(line, &mut in_block_comment) {
+            continue;
+        }
+        if predicate(&line.trim().to_ascii_lowercase()) {
+            matching_lines.push(line_number);
+        }
+    }
+    if matching_lines.is_empty() {
+        return Ok(serde_json::to_string(&TankerPatternResponse {
+            start_line: cursor_line,
+            end_line: cursor_line.saturating_sub(1),
+            lines: replacement_lines.to_vec(),
+        })?);
+    }
+
+    let encounter_lines = input_lines
+        .get(encounter.start_line.saturating_sub(1)..encounter_end)
+        .unwrap_or_default();
+    let first_relative = matching_lines[0] - encounter.start_line;
+    let mut output = Vec::new();
+    let mut replacement_index = 0;
+    for (index, line) in encounter_lines.iter().enumerate() {
+        let line_number = encounter.start_line + index;
+        if matching_lines.contains(&line_number) {
+            if let Some(replacement) = replacement_lines.get(replacement_index) {
+                output.push(replacement.clone());
+                replacement_index += 1;
+            }
+        } else {
+            output.push((*line).to_string());
+        }
+    }
+    let remaining = replacement_lines
+        .iter()
+        .skip(replacement_index)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !remaining.is_empty() {
+        let insertion_index = (first_relative + replacement_lines.len()).min(output.len());
+        output.splice(insertion_index..insertion_index, remaining);
+    }
+
+    Ok(serde_json::to_string(&TankerPatternResponse {
+        start_line: encounter.start_line,
+        end_line: encounter_end,
+        lines: output,
+    })?)
+}
+
+fn garuda2_insert_line(seed: u32, input: &str, encounter: &ctb::EncounterBlock) -> usize {
+    find_insert_line_from_opening_icv(seed, input, encounter, "M1")
+        .or_else(|| {
+            find_first_active_encounter_line(input, encounter, |line| line == "lulu escape")
+        })
+        .or_else(|| {
+            find_first_active_encounter_line(input, encounter, |line| line == "yuna escape")
+                .map(|line| line + 1)
+        })
+        .unwrap_or(encounter.end_line + 1)
+}
+
+fn find_insert_line_from_opening_icv(
+    seed: u32,
+    input: &str,
+    encounter: &ctb::EncounterBlock,
+    monster_token: &str,
+) -> Option<usize> {
+    let tokens = opening_icv_tokens(seed, input, encounter.index);
+    if !tokens.iter().any(|token| token == monster_token) {
+        return None;
+    }
+    let mut party_actions_before_monster = 0;
+    for token in tokens {
+        if token == monster_token {
+            break;
+        }
+        if !token.starts_with('M') {
+            party_actions_before_monster += 1;
+        }
+    }
+
+    let input_lines = input.lines().collect::<Vec<_>>();
+    let encounter_end = encounter.end_line.min(input_lines.len());
+    let mut seen_party_actions = 0;
+    let mut in_block_comment = false;
+    for line_number in encounter.start_line.saturating_add(1)..=encounter_end {
+        let Some(line) = input_lines.get(line_number.saturating_sub(1)) else {
+            continue;
+        };
+        if !route_line_is_active(line, &mut in_block_comment) {
+            continue;
+        }
+        let stripped = line.trim();
+        if stripped.is_empty() || stripped.starts_with('#') {
+            continue;
+        }
+        let Some(token) = stripped.split_whitespace().next() else {
+            continue;
+        };
+        if token.parse::<Character>().is_err() {
+            continue;
+        }
+        if seen_party_actions == party_actions_before_monster {
+            return Some(line_number);
+        }
+        seen_party_actions += 1;
+    }
+    Some(encounter_end + 1)
+}
+
+fn opening_icv_tokens(seed: u32, input: &str, encounter_index: usize) -> Vec<String> {
+    let prepared = prepare_action_lines(input);
+    let mut state = SimulationState::new(seed);
+    let mut encounter_ordinal = 0;
+    let mut in_block_comment = false;
+    for raw_line in prepared.lines {
+        if !route_line_is_active(&raw_line, &mut in_block_comment) {
+            continue;
+        }
+        let stripped = raw_line.trim();
+        if stripped.is_empty() || stripped.starts_with('#') {
+            continue;
+        }
+        let is_encounter = matches!(
+            parse_raw_action_line(&raw_line),
+            ParsedCommand::Encounter { .. }
+        );
+        let rendered = state.execute_raw_line(&raw_line);
+        if is_encounter {
+            encounter_ordinal += 1;
+            if encounter_ordinal == encounter_index {
+                return ctb_tokens_from_rendered_encounter(&rendered);
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn ctb_tokens_from_rendered_encounter(rendered: &str) -> Vec<String> {
+    let Some(summary) = rendered.rsplit(" | ").next() else {
+        return Vec::new();
+    };
+    summary
+        .split_whitespace()
+        .filter_map(|token| token.split_once('[').map(|(name, _)| name.to_string()))
+        .collect()
+}
+
+fn find_first_active_encounter_line<F>(
+    input: &str,
+    encounter: &ctb::EncounterBlock,
+    mut predicate: F,
+) -> Option<usize>
+where
+    F: FnMut(&str) -> bool,
+{
+    let input_lines = input.lines().collect::<Vec<_>>();
+    let encounter_end = encounter.end_line.min(input_lines.len());
+    let mut in_block_comment = false;
+    for line_number in encounter.start_line..=encounter_end {
+        let line = input_lines.get(line_number.saturating_sub(1))?;
+        if !route_line_is_active(line, &mut in_block_comment) {
+            continue;
+        }
+        if predicate(&line.trim().to_ascii_lowercase()) {
+            return Some(line_number);
+        }
+    }
+    None
+}
+
+fn build_tanker_lines(pattern: &str) -> Vec<String> {
+    let slot_order = [
+        "m5", "m7", "m6", "m2", "m3", "m4", "m8", "m5", "m7", "m6", "m2", "m3", "m4", "m8",
+    ];
+    let mut actions = vec!["does_nothing"; slot_order.len()];
+    let tokens = pattern.chars().collect::<Vec<_>>();
+    let mut position = 0;
+    let mut index = 0;
+    while index < tokens.len() && position < slot_order.len() {
+        match tokens[index] {
+            'w' | 's' => {
+                actions[position] = "wings_flicker";
+                let paired_position = position + 7;
+                if paired_position < slot_order.len() {
+                    actions[paired_position] = "spines";
+                    position = paired_position + 1;
+                } else {
+                    position += 1;
+                }
+                if tokens[index] == 'w' && index + 1 < tokens.len() && tokens[index + 1] == 's' {
+                    index += 1;
+                }
+            }
+            token => {
+                actions[position] = map_tanker_action_token(token);
+                position += 1;
+            }
+        }
+        index += 1;
+    }
+
+    let mut lines = Vec::new();
+    for block_index in 0..2 {
+        let start = block_index * 7;
+        let end = start + 7;
+        for index in start..end {
+            lines.push(format!("{} {}", slot_order[index], actions[index]));
+        }
+        if block_index == 0 {
+            lines.push(String::new());
+        }
+    }
+    lines
+}
+
+fn map_tanker_action_token(token: char) -> &'static str {
+    match token {
+        'a' => "attack",
+        'w' => "wings_flicker",
+        's' => "spines",
+        'd' | 'n' | '-' => "does_nothing",
+        _ => "does_nothing",
+    }
+}
+
 pub fn tracker_default_json(tracker: &str, seed: u32) -> Result<String, ApiError> {
     let response = match tracker {
         "drops" => TrackerDefaultResponse {
@@ -388,11 +898,36 @@ pub fn tracker_render_json(tracker: &str, seed: u32, input: &str) -> Result<Stri
     Ok(serde_json::to_string(&response)?)
 }
 
+pub fn no_encounters_routes_json(
+    seed: u32,
+    input: &str,
+    start_line: usize,
+    encounters_input: Option<&str>,
+    encounters_output: Option<&str>,
+) -> Result<String, ApiError> {
+    let (output, edited_input) = build_no_encounters_routes_output(
+        seed,
+        input,
+        start_line,
+        encounters_input,
+        encounters_output,
+    );
+    Ok(serde_json::to_string(&NoEncountersRoutesResponse {
+        output,
+        edited_input,
+    })?)
+}
+
 fn render_encounters_tracker(seed: u32, input: &str) -> String {
     let render_input = protect_tracker_block_comment_repeats(input);
     let rendered = ctb::render_ctb(seed, &render_input);
     let padding = !tracker_has_active_nopadding(input);
-    edit_encounters_tracker_output(&rendered.output, padding)
+    let output = edit_encounters_tracker_output(&rendered.output, padding);
+    if output.is_empty() {
+        output
+    } else {
+        format!("{}\n", output.trim_end())
+    }
 }
 
 impl DropsInventory {
@@ -518,6 +1053,7 @@ impl DropsInventory {
 }
 
 fn render_drops_tracker(seed: u32, input: &str) -> String {
+    let input = strip_generated_drops_preamble(input);
     let mut rng = FfxRngTracker::new(seed);
     let mut party = vec![Character::Tidus, Character::Auron];
     let mut ap_state = drops_initial_ap_state();
@@ -529,13 +1065,14 @@ fn render_drops_tracker(seed: u32, input: &str) -> String {
     let mut multiline_comment = false;
     let padding = !tracker_has_active_nopadding(input);
     for raw_line in expand_tracker_repeats(input) {
-        if raw_line.starts_with("/*") {
+        let stripped = raw_line.trim();
+        if stripped.starts_with("/*") {
             multiline_comment = true;
         }
         if multiline_comment {
             let line = raw_line.replace("__ctb_tracker_block_comment_repeat__", "/repeat");
             lines.push(format!("# {line}"));
-            if raw_line.ends_with("*/") {
+            if stripped.ends_with("*/") {
                 multiline_comment = false;
             }
             continue;
@@ -603,13 +1140,1063 @@ fn render_drops_tracker(seed: u32, input: &str) -> String {
     }
 }
 
+fn strip_generated_drops_preamble(input: &str) -> &str {
+    if input.lines().next().is_some_and(|line| {
+        let normalized = line.trim().to_ascii_lowercase();
+        normalized == "drop search result" || normalized == "drop analysis result"
+    }) {
+        if let Some((_, route)) = input.split_once("Resolved drop route") {
+            return route.trim_start_matches(['\r', '\n']);
+        }
+    }
+    input
+}
+
+fn build_no_encounters_routes_output(
+    seed: u32,
+    input: &str,
+    start_line: usize,
+    encounters_input: Option<&str>,
+    encounters_output: Option<&str>,
+) -> (String, String) {
+    let edited_input = edit_drops_tracker_input(input);
+    let input_lines = input.lines().collect::<Vec<_>>();
+    if input_lines.is_empty() {
+        return (
+            "No Encounters search: input is empty.".to_string(),
+            String::new(),
+        );
+    }
+    let start_line = start_line.clamp(1, input_lines.len());
+    let first_ghost_line = drops_search_first_ghost_line(&input_lines, start_line);
+    if first_ghost_line.is_none() {
+        return (
+            "No Encounters search: no Ghost line was found below the cursor.".to_string(),
+            edited_input,
+        );
+    }
+    let start_section_name = drops_search_start_section_name(&input_lines, start_line);
+    let future_from_output = encounters_output
+        .filter(|output| !output.trim().is_empty())
+        .and_then(|output| parse_exact_future_encounter_output(output, &start_section_name));
+    if encounters_output.is_some_and(|output| !output.trim().is_empty()) {
+        if future_from_output.is_none() && encounters_input.is_none() {
+            return (
+                "No Encounters search: the Encounters tracker output could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
+                edited_input,
+            );
+        }
+    }
+    let mut future_from_input = None;
+    if let Some(encounters_input) = encounters_input.filter(|input| !input.trim().is_empty()) {
+        if future_from_output.is_none() {
+            future_from_input =
+                parse_exact_future_encounter_output(encounters_input, &start_section_name);
+            if future_from_input.is_none() {
+                if !encounters_input_has_exact_future_rows(encounters_input) {
+                    return (
+                        "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
+                        edited_input,
+                    );
+                }
+                let rendered = render_encounters_tracker(seed, encounters_input);
+                future_from_input =
+                    parse_exact_future_encounter_output(&rendered, &start_section_name);
+            }
+            if future_from_input.is_none() {
+                return (
+                    "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
+                    edited_input,
+                );
+            }
+        }
+    }
+    let future_source = if future_from_output.is_some() {
+        "exact-encounters-output"
+    } else if future_from_input.is_some() {
+        "exact-encounters-input"
+    } else {
+        "notes-fallback"
+    };
+    let future = future_from_output.as_ref().or(future_from_input.as_ref());
+    let future_rows = future.map(|future| future.rows.len());
+    let future_sections_debug = future
+        .map(format_future_section_maxima_debug)
+        .unwrap_or_else(|| "Future random sections: none.".to_string());
+    let preview = build_no_encounters_preview(
+        seed,
+        &edited_input,
+        start_line,
+        first_ghost_line,
+        future_source,
+        &future_sections_debug,
+        future_rows,
+        future,
+    );
+    (preview.output, preview.edited_input.unwrap_or(edited_input))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NoEncountersPreview {
+    output: String,
+    edited_input: Option<String>,
+}
+
+fn build_no_encounters_preview(
+    seed: u32,
+    edited_input: &str,
+    start_line: usize,
+    first_ghost_line: Option<usize>,
+    future_source: &str,
+    future_sections_debug: &str,
+    future_rows: Option<usize>,
+    future: Option<&ExactFutureEncounterOutput>,
+) -> NoEncountersPreview {
+    let first_ghost_input = first_ghost_search_window_input(edited_input, start_line)
+        .unwrap_or_else(|| edited_input.to_string());
+    let rendered = render_drops_tracker(seed, &first_ghost_input);
+    let mut lines = Vec::new();
+    let mut suggested_input = None;
+    lines.push("No Encounters search:".to_string());
+    if let Some(drop) = find_no_encounters_ghost_drop(&rendered) {
+        let search_mode =
+            no_encounters_search_mode(future_source, Some(&first_ghost_input), true, future);
+        push_no_encounters_context_line(&mut lines, start_line, first_ghost_line, Some(1));
+        lines.push(format!("Search mode: {search_mode}."));
+        lines.push(future_sections_debug.to_string());
+        lines.push(format!("No Encounters armor: {drop}"));
+        lines.push(
+            "Route status: current Ghost route already produces a qualifying armor.".to_string(),
+        );
+        push_no_encounters_random_row_summary(&mut lines, &first_ghost_input, future);
+    } else {
+        let search = synthesize_no_encounters_ghost_route(seed, edited_input, start_line, 50, 3);
+        push_no_encounters_context_line(
+            &mut lines,
+            start_line,
+            first_ghost_line,
+            Some(search.candidates_tested),
+        );
+        let mode_route_input = search
+            .candidate
+            .as_ref()
+            .map(|candidate| candidate.route_input.as_str());
+        let search_mode = no_encounters_search_mode(
+            future_source,
+            mode_route_input,
+            search.candidate.is_some(),
+            future,
+        );
+        lines.push(format!("Search mode: {search_mode}."));
+        lines.push(future_sections_debug.to_string());
+        if let Some(candidate) = search.candidate {
+            lines.push(format!("No Encounters armor: {}", candidate.drop));
+            lines.push(format!("Suggested Ghost kills: {}", candidate.ghost_kills));
+            if candidate.pre_ghost_deaths > 0 {
+                lines.push(format!(
+                    "Suggested pre-Ghost deaths: {}",
+                    candidate.pre_ghost_deaths
+                ));
+            }
+            lines.push(format!("Suggested repeat line: {}", candidate.repeat_line));
+            lines.push(format!("Candidates tested: {}", search.candidates_tested));
+            push_no_encounters_random_row_summary(&mut lines, &candidate.route_input, future);
+            suggested_input = Some(candidate.route_input);
+        } else {
+            lines.push(
+                "No Encounters armor: none found in the current Ghost route window.".to_string(),
+            );
+            lines.push(
+                "Route status: no bounded Ghost-repeat/pre-Ghost-death candidate found; adjust supporting drop manipulations and rerun.".to_string(),
+            );
+            lines.push(
+                "No route found that gives a No Encounters armor from the first Ghost.".to_string(),
+            );
+            lines.push(format!("Candidates tested: {}", search.candidates_tested));
+        }
+    }
+    if let Some(rows) = future_rows {
+        lines.push(format!(
+            "Future encounters parsed: {rows} row(s) through Ghost."
+        ));
+    }
+    NoEncountersPreview {
+        output: lines.join("\n"),
+        edited_input: suggested_input,
+    }
+}
+
+fn push_no_encounters_context_line(
+    lines: &mut Vec<String>,
+    start_line: usize,
+    first_ghost_line: Option<usize>,
+    tested_routes: Option<usize>,
+) {
+    let Some(first_ghost_line) = first_ghost_line else {
+        return;
+    };
+    let Some(tested_routes) = tested_routes else {
+        lines.push(format!(
+            "Cursor line {start_line}, first Ghost line {first_ghost_line}."
+        ));
+        return;
+    };
+    lines.push(format!(
+        "Cursor line {start_line}, first Ghost line {first_ghost_line}, tested {tested_routes} route(s)."
+    ));
+}
+
+fn find_no_encounters_ghost_drop(rendered_drops: &str) -> Option<String> {
+    rendered_drops
+        .lines()
+        .find(|line| {
+            line.contains("Ghost |")
+                && line.contains("Equipment #")
+                && line.contains("No Encounters")
+        })
+        .map(|line| {
+            line.split_once("Equipment #")
+                .map(|(_, equipment)| format!("Equipment #{}", equipment.trim()))
+                .unwrap_or_else(|| line.trim().to_string())
+        })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NoEncountersGhostRouteCandidate {
+    ghost_kills: usize,
+    pre_ghost_deaths: usize,
+    repeat_line: String,
+    drop: String,
+    route_input: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NoEncountersGhostRouteSearch {
+    candidate: Option<NoEncountersGhostRouteCandidate>,
+    candidates_tested: usize,
+}
+
+fn synthesize_no_encounters_ghost_route(
+    seed: u32,
+    edited_input: &str,
+    start_line: usize,
+    max_ghost_kills: usize,
+    max_pre_ghost_deaths: usize,
+) -> NoEncountersGhostRouteSearch {
+    let lines = edited_input
+        .lines()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    let Some(ghost_index) = find_first_ghost_route_line(&lines, start_line) else {
+        return NoEncountersGhostRouteSearch {
+            candidate: None,
+            candidates_tested: 0,
+        };
+    };
+    let repeat_index = find_active_repeat_after_ghost(&lines, ghost_index);
+
+    let mut candidates_tested = 0;
+    for pre_ghost_deaths in 0..=max_pre_ghost_deaths {
+        for ghost_kills in 1..=max_ghost_kills.max(1) {
+            candidates_tested += 1;
+            let repeat_line = if ghost_kills <= 1 {
+                "# /repeat 0".to_string()
+            } else {
+                format!("/repeat {}", ghost_kills - 1)
+            };
+            let mut candidate_lines = lines.clone();
+            match repeat_index {
+                Some(index) if ghost_kills <= 1 => {
+                    candidate_lines.remove(index);
+                }
+                Some(index) => {
+                    candidate_lines[index] = repeat_line.clone();
+                }
+                None if ghost_kills > 1 => {
+                    candidate_lines.insert(ghost_index + 1, repeat_line.clone());
+                }
+                None => {}
+            }
+            if pre_ghost_deaths > 0 {
+                let death_lines = (0..pre_ghost_deaths)
+                    .map(|_| "death ???".to_string())
+                    .collect::<Vec<_>>();
+                candidate_lines.splice(ghost_index..ghost_index, death_lines);
+            }
+            let route_input = candidate_lines.join("\n");
+            let route_search_input =
+                first_ghost_search_window_input_from_lines(&candidate_lines, start_line)
+                    .unwrap_or_else(|| route_input.clone());
+            let rendered = render_drops_tracker(seed, &route_search_input);
+            if let Some(drop) = find_no_encounters_ghost_drop(&rendered) {
+                return NoEncountersGhostRouteSearch {
+                    candidate: Some(NoEncountersGhostRouteCandidate {
+                        ghost_kills,
+                        pre_ghost_deaths,
+                        repeat_line,
+                        drop,
+                        route_input,
+                    }),
+                    candidates_tested,
+                };
+            }
+        }
+    }
+    NoEncountersGhostRouteSearch {
+        candidate: None,
+        candidates_tested,
+    }
+}
+
+fn no_encounters_search_mode(
+    encounter_source: &str,
+    route_input: Option<&str>,
+    route_found: bool,
+    future: Option<&ExactFutureEncounterOutput>,
+) -> String {
+    let should_prefer_guaranteed = if encounter_source != "exact-encounters-output" {
+        false
+    } else if let Some(future) = future.filter(|future| !future.section_maxima.is_empty()) {
+        !route_found
+            || route_input
+                .and_then(|route_input| count_route_exact_future_random_rows(route_input, future))
+                .map_or(true, |random_rows| random_rows > 0)
+    } else {
+        false
+    };
+    if should_prefer_guaranteed {
+        format!("{encounter_source}, prefer-guaranteed")
+    } else {
+        encounter_source.to_string()
+    }
+}
+
+fn push_no_encounters_random_row_summary(
+    lines: &mut Vec<String>,
+    route_input: &str,
+    future: Option<&ExactFutureEncounterOutput>,
+) {
+    let Some(future) = future else {
+        return;
+    };
+    let Some(random_rows) = count_route_exact_future_random_rows(route_input, future) else {
+        return;
+    };
+    if random_rows == 0 {
+        lines.push("Guaranteed-only route(s) found before optional random routes.".to_string());
+    } else {
+        lines.push(format!(
+            "No guaranteed-only route found; best result uses {random_rows} random encounter row{}.",
+            if random_rows == 1 { "" } else { "s" }
+        ));
+    }
+}
+
+fn count_route_exact_future_random_rows(
+    route_input: &str,
+    future: &ExactFutureEncounterOutput,
+) -> Option<usize> {
+    let route_monsters = route_kill_monsters(route_input);
+    if route_monsters.is_empty() {
+        return Some(0);
+    }
+    let mut next_row_index = 0;
+    let mut current_remaining: HashMap<String, usize> = HashMap::new();
+    let mut current_is_ghost = false;
+    let mut random_rows = 0;
+
+    for monster in route_monsters {
+        loop {
+            if let Some(resolved) = resolve_remaining_monster(&monster, &current_remaining) {
+                if let Some(count) = current_remaining.get_mut(&resolved) {
+                    *count -= 1;
+                    if *count <= 0 {
+                        current_remaining.remove(&resolved);
+                    }
+                }
+                break;
+            }
+            if current_is_ghost {
+                return None;
+            }
+            let row = future.rows.get(next_row_index)?;
+            next_row_index += 1;
+            current_remaining = encounter_options_maxima(&row.encounter_options);
+            current_is_ghost = current_remaining.contains_key("ghost");
+            if row.random {
+                random_rows += 1;
+            }
+        }
+    }
+
+    Some(random_rows)
+}
+
+fn route_kill_monsters(route_input: &str) -> Vec<String> {
+    let mut monsters = Vec::new();
+    for line in expand_tracker_repeats(route_input) {
+        let normalized = normalize_drops_search_line(&line);
+        let words = normalized.split_whitespace().collect::<Vec<_>>();
+        if words.len() >= 2 && words[0] == "kill" {
+            monsters.push(words[1].to_string());
+            if words[1] == "ghost" {
+                break;
+            }
+        }
+    }
+    monsters
+}
+
+fn resolve_remaining_monster(
+    monster_name: &str,
+    remaining_monsters: &HashMap<String, usize>,
+) -> Option<String> {
+    if remaining_monsters
+        .get(monster_name)
+        .copied()
+        .unwrap_or_default()
+        > 0
+    {
+        return Some(monster_name.to_string());
+    }
+    let target_family = monster_family(monster_name);
+    let mut family_match = None;
+    for (name, count) in remaining_monsters {
+        if *count == 0 || monster_family(name) != target_family {
+            continue;
+        }
+        if family_match.is_some() {
+            return None;
+        }
+        family_match = Some(name.clone());
+    }
+    family_match
+}
+
+fn monster_family(monster_name: &str) -> &str {
+    monster_name
+        .trim_end_matches(|character: char| character.is_ascii_digit())
+        .trim_end_matches('_')
+}
+
+fn first_ghost_search_window_input(edited_input: &str, start_line: usize) -> Option<String> {
+    let lines = edited_input
+        .lines()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    first_ghost_search_window_input_from_lines(&lines, start_line)
+}
+
+fn first_ghost_search_window_input_from_lines(
+    lines: &[String],
+    start_line: usize,
+) -> Option<String> {
+    let ghost_index = find_first_ghost_window_line(lines, start_line)?;
+    let end_index = find_active_repeat_after_ghost(lines, ghost_index).unwrap_or(ghost_index);
+    Some(
+        lines
+            .iter()
+            .take(end_index + 1)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+fn find_first_ghost_window_line(lines: &[String], start_line: usize) -> Option<usize> {
+    let mut in_block_comment = false;
+    for (index, line) in lines.iter().enumerate().skip(start_line.saturating_sub(1)) {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if drops_search_route_line_is_ghost(line) {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn find_first_ghost_route_line(lines: &[String], start_line: usize) -> Option<usize> {
+    let mut in_block_comment = false;
+    for (index, line) in lines.iter().enumerate().skip(start_line.saturating_sub(1)) {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
+        if drops_search_route_line_is_ghost(line) {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn find_active_repeat_after_ghost(lines: &[String], ghost_index: usize) -> Option<usize> {
+    let mut in_block_comment = false;
+    for (index, line) in lines.iter().enumerate().skip(ghost_index + 1) {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if trimmed == "/repeat" || trimmed.starts_with("/repeat ") {
+            return Some(index);
+        }
+        return None;
+    }
+    None
+}
+
+fn format_future_section_maxima_debug(future: &ExactFutureEncounterOutput) -> String {
+    let mut section_parts = future
+        .section_maxima
+        .iter()
+        .filter_map(|(section_name, maxima)| {
+            let mut monster_parts = maxima
+                .iter()
+                .map(|(monster_name, count)| (monster_name.as_str(), *count))
+                .collect::<Vec<_>>();
+            monster_parts
+                .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(right.0)));
+            let monster_parts = monster_parts
+                .into_iter()
+                .take(4)
+                .map(|(monster_name, count)| format!("{monster_name}x{count}"))
+                .collect::<Vec<_>>();
+            if monster_parts.is_empty() {
+                None
+            } else {
+                Some(format!("{}: {}", section_name, monster_parts.join(", ")))
+            }
+        })
+        .collect::<Vec<_>>();
+    section_parts.sort();
+    if section_parts.is_empty() {
+        "Future random sections: none.".to_string()
+    } else {
+        format!("Future random sections: {}.", section_parts.join(" | "))
+    }
+}
+
+fn parse_exact_future_encounter_output(
+    encounters_output: &str,
+    start_section_name: &str,
+) -> Option<ExactFutureEncounterOutput> {
+    let mut rows = Vec::new();
+    let mut total_counts = HashMap::new();
+    let mut section_maxima: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut current_section_name = String::new();
+    let mut started = start_section_name.is_empty();
+    let mut in_block_comment = false;
+
+    for line in encounters_output.lines() {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if stripped.is_empty() || stripped.chars().all(|character| character == '=') {
+            continue;
+        }
+        if stripped.starts_with('#') {
+            let label = stripped
+                .trim_start_matches('#')
+                .trim()
+                .trim_end_matches(':')
+                .trim();
+            current_section_name = encounter_note_section_name(label, "", &current_section_name);
+            continue;
+        }
+        if !line.contains('|') {
+            continue;
+        }
+
+        let parts = line.split('|').map(str::trim).collect::<Vec<_>>();
+        let mut label = "";
+        let row_prefix_random = encounter_output_row_prefix_random(parts[0]);
+        let first_part = strip_encounter_output_row_prefix(parts[0]);
+        let encounter_parts = if looks_like_encounter_output_metadata(first_part) {
+            if parts
+                .get(1)
+                .is_some_and(|part| !parse_output_formation_monsters(part).is_empty())
+            {
+                &parts[1..]
+            } else if parts.len() >= 3 {
+                label = parts[1];
+                &parts[2..]
+            } else {
+                continue;
+            }
+        } else {
+            label = parts[0];
+            &parts[1..]
+        };
+
+        let mut row_section_name = current_section_name.clone();
+        if !label.is_empty() {
+            let note_name = normalize_output_label_to_note_name(label);
+            row_section_name = if row_prefix_random.is_some() {
+                raw_encounter_output_label_section_name(
+                    label,
+                    &current_section_name,
+                    start_section_name,
+                )
+            } else {
+                encounter_note_section_name("", &note_name, &current_section_name)
+            };
+            current_section_name.clone_from(&row_section_name);
+        }
+        if !started {
+            if row_section_name != start_section_name {
+                continue;
+            }
+            started = true;
+        }
+
+        let encounter_options = encounter_parts
+            .iter()
+            .map(|part| parse_output_formation_monsters(part))
+            .filter(|monsters| !monsters.is_empty())
+            .collect::<Vec<_>>();
+        if encounter_options.is_empty() {
+            continue;
+        }
+
+        let row_is_random = row_prefix_random.unwrap_or(label.is_empty());
+        let maxima = encounter_options_maxima(&encounter_options);
+        add_counts(&mut total_counts, &maxima);
+        if row_is_random {
+            add_counts(section_maxima.entry(row_section_name).or_default(), &maxima);
+        }
+        let has_ghost = encounter_options
+            .iter()
+            .any(|monsters| monsters.iter().any(|monster| monster == "ghost"));
+        rows.push(ExactFutureEncounterRow {
+            encounter_options,
+            random: row_is_random,
+        });
+        if has_ghost {
+            break;
+        }
+    }
+
+    (started && !rows.is_empty()).then_some(ExactFutureEncounterOutput {
+        rows,
+        total_counts,
+        section_maxima,
+    })
+}
+
+fn raw_encounter_output_label_section_name(
+    label: &str,
+    current_section_name: &str,
+    start_section_name: &str,
+) -> String {
+    let section_names = label
+        .split('/')
+        .map(|part| encounter_note_section_name(part.trim(), "", current_section_name))
+        .filter(|section_name| !section_name.is_empty())
+        .collect::<Vec<_>>();
+    if !start_section_name.is_empty()
+        && section_names
+            .iter()
+            .any(|section_name| section_name == start_section_name)
+    {
+        start_section_name.to_string()
+    } else {
+        section_names
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| current_section_name.to_string())
+    }
+}
+
+fn strip_encounter_output_row_prefix(text: &str) -> &str {
+    for prefix in [
+        "Random Encounter:",
+        "Multizone encounter:",
+        "Simulated Encounter:",
+        "Encounter:",
+    ] {
+        if let Some(stripped) = text.trim().strip_prefix(prefix) {
+            return stripped.trim();
+        }
+    }
+    text
+}
+
+fn encounter_output_row_prefix_random(text: &str) -> Option<bool> {
+    let trimmed = text.trim();
+    if trimmed.starts_with("Random Encounter:") || trimmed.starts_with("Multizone encounter:") {
+        Some(true)
+    } else if trimmed.starts_with("Encounter:") || trimmed.starts_with("Simulated Encounter:") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn looks_like_encounter_output_metadata(text: &str) -> bool {
+    let words = text.split_whitespace().collect::<Vec<_>>();
+    !words.is_empty()
+        && words
+            .iter()
+            .all(|word| word.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn parse_output_formation_monsters(formation_text: &str) -> Vec<String> {
+    let mut stripped = formation_text.trim();
+    if stripped.is_empty() || stripped == "-" {
+        return Vec::new();
+    }
+    for suffix in [" Ambush", " Preemptive", " Normal"] {
+        if let Some(without_suffix) = stripped.strip_suffix(suffix) {
+            stripped = without_suffix;
+            break;
+        }
+    }
+    let mut monsters = Vec::new();
+    for monster_name in stripped.split(',').map(str::trim) {
+        if monster_name.is_empty() {
+            continue;
+        }
+        let normalized = monster_name
+            .to_ascii_lowercase()
+            .replace(' ', "_")
+            .replace('#', "_");
+        let Some(monster) =
+            data::monster_stats(monster_name).or_else(|| data::monster_stats(&normalized))
+        else {
+            return Vec::new();
+        };
+        monsters.push(monster.key);
+    }
+    monsters
+}
+
+fn encounter_options_maxima(encounter_options: &[Vec<String>]) -> HashMap<String, usize> {
+    let mut maxima: HashMap<String, usize> = HashMap::new();
+    for monsters in encounter_options {
+        let mut current_counts = HashMap::new();
+        for monster in monsters {
+            *current_counts.entry(monster.clone()).or_default() += 1;
+        }
+        for (monster, count) in current_counts {
+            let maximum = maxima.entry(monster).or_default();
+            *maximum = (*maximum).max(count);
+        }
+    }
+    maxima
+}
+
+fn add_counts(target: &mut HashMap<String, usize>, counts: &HashMap<String, usize>) {
+    for (monster, count) in counts {
+        *target.entry(monster.clone()).or_default() += count;
+    }
+}
+
+fn normalize_output_label_to_note_name(label: &str) -> String {
+    label
+        .trim()
+        .to_ascii_lowercase()
+        .replace(' ', "_")
+        .replace('#', "_")
+}
+
+fn encounter_note_section_name(label: &str, note_name: &str, current_section_name: &str) -> String {
+    let label = label.trim();
+    if label.starts_with("Underwater Ruins") {
+        "Underwater Ruins"
+    } else if label.starts_with("Besaid") {
+        "Besaid"
+    } else if label.starts_with("Kilika") {
+        "Kilika"
+    } else if label.starts_with("Mi'ihen") {
+        "Mi'ihen"
+    } else if label.starts_with("Old Road") {
+        "Old Road"
+    } else if label.starts_with("Clasko Skip Screen") {
+        "Clasko Skip Screen"
+    } else if label.starts_with("Djose") {
+        "Djose"
+    } else if label.starts_with("Moonflow") {
+        "Moonflow"
+    } else if label.starts_with("Thunder Plains") {
+        "Thunder Plains"
+    } else if label.starts_with("Macalania") {
+        "Macalania Woods"
+    } else if label.starts_with("Lake Macalania") {
+        "Lake Macalania"
+    } else if label.starts_with("Crevasse") {
+        "Crevasse"
+    } else if label.starts_with("Bikanel") || label.starts_with("Sandragora") {
+        "Bikanel"
+    } else if label.starts_with("Home") {
+        "Home"
+    } else if label.starts_with("Airship") || label.starts_with("Bevelle") {
+        "Airship"
+    } else if label.starts_with("Via Purifico (Maze)")
+        || label.starts_with("Via Purifico (Corridor)")
+    {
+        "Via Purifico"
+    } else if label.starts_with("Via Purifico (Underwater)") {
+        "Underwater"
+    } else if label.starts_with("Highbridge") {
+        "Highbridge"
+    } else if label.starts_with("Calm Lands") || label.starts_with("Biran & Yenke (pre Cave)") {
+        "Calm Lands"
+    } else if label.starts_with("Cave") {
+        "Cavern of the Stolen Fayth"
+    } else if label.starts_with("Biran & Yenke") || label.starts_with("Gagazet") {
+        "Gagazet"
+    } else if label.starts_with("Zanarkand") {
+        "Zanarkand"
+    } else if label.starts_with("Inside Sin") {
+        "Sin"
+    } else if !label.is_empty() {
+        label
+    } else {
+        match note_name {
+            "evrae" => "Airship",
+            "bevelle_guards_1" | "bevelle_guards_2" | "bevelle_guards_3" | "bevelle_guards_4"
+            | "bevelle_guards_5" => "Bevelle",
+            "evrae_altana" => "Underwater",
+            "seymour_natus" => "Highbridge",
+            "defender_x" => "Calm Lands",
+            "biran_&_yenke" | "seymour_flux" | "sanctuary_keeper" => "Gagazet",
+            "spectral_keeper" | "yunalesca" => "Zanarkand",
+            "left_fin" | "right_fin" | "sin_core" | "overdrive_sin" | "seymour_omnis" => "Sin",
+            _ => current_section_name,
+        }
+    }
+    .to_string()
+}
+
+fn encounters_input_has_exact_future_rows(encounters_input: &str) -> bool {
+    let mut in_block_comment = false;
+    for line in encounters_input.lines() {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if stripped.is_empty() || stripped.starts_with('#') || stripped == "///" {
+            continue;
+        }
+        let ParsedCommand::Encounter {
+            name,
+            multizone,
+            zones,
+        } = parse_raw_action_line(stripped)
+        else {
+            continue;
+        };
+        if multizone {
+            if !zones.is_empty()
+                && zones
+                    .iter()
+                    .all(|zone| data::random_zone_stats(zone).is_some())
+            {
+                return true;
+            }
+        } else if data::boss_or_simulated_formation(&name).is_some()
+            || data::random_zone_stats(&name).is_some()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn edit_drops_tracker_input(input: &str) -> String {
+    input
+        .lines()
+        .map(|line| {
+            let mut words = line.split_whitespace();
+            let Some(first) = words.next() else {
+                return line.to_string();
+            };
+            if data::monster_stats(first).is_some() {
+                format!("kill {line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn drops_search_first_ghost_line(input_lines: &[&str], start_line: usize) -> Option<usize> {
+    let mut in_block_comment = false;
+    for (index, line) in input_lines
+        .iter()
+        .enumerate()
+        .skip(start_line.saturating_sub(1))
+    {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if drops_search_route_line_is_ghost(line) {
+            return Some(index + 1);
+        }
+    }
+    None
+}
+
+fn drops_search_start_section_name(input_lines: &[&str], start_line: usize) -> String {
+    let mut current_section_name = String::new();
+    let mut first_route_section_name = None;
+    let mut in_block_comment = false;
+    for line in input_lines.iter().take(start_line.saturating_sub(1)) {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if let Some(section_name) = drops_search_section_name(line) {
+            current_section_name = section_name;
+        }
+    }
+    in_block_comment = false;
+    for line in input_lines.iter().skip(start_line.saturating_sub(1)) {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            if !stripped.ends_with("*/") {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
+        if let Some(section_name) = drops_search_section_name(line) {
+            current_section_name = section_name;
+            continue;
+        }
+        if drops_search_route_line_is_candidate(line) {
+            first_route_section_name.get_or_insert_with(|| current_section_name.clone());
+        }
+        if drops_search_route_line_is_ghost(line) {
+            break;
+        }
+    }
+    first_route_section_name.unwrap_or(current_section_name)
+}
+
+fn drops_search_section_name(line: &str) -> Option<String> {
+    let stripped = line.trim();
+    if stripped.starts_with("# -- ") && stripped.ends_with(" --") {
+        Some(stripped[5..stripped.len() - 3].trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn drops_search_route_line_is_candidate(line: &str) -> bool {
+    let normalized = normalize_drops_search_line(line);
+    let Some(command) = normalized.split_whitespace().next() else {
+        return false;
+    };
+    matches!(
+        command,
+        "kill" | "steal" | "death" | "bribe" | "party" | "roll" | "ap" | "inventory"
+    )
+}
+
+fn drops_search_route_line_is_ghost(line: &str) -> bool {
+    let normalized = normalize_drops_search_line(line);
+    let words = normalized.split_whitespace().collect::<Vec<_>>();
+    words.len() >= 2 && words[0] == "kill" && words[1] == "ghost"
+}
+
+fn normalize_drops_search_line(line: &str) -> String {
+    let mut stripped = line.trim();
+    while let Some(rest) = stripped.strip_prefix('#') {
+        stripped = rest.trim();
+    }
+    edit_drops_tracker_input(stripped)
+        .trim()
+        .to_ascii_lowercase()
+}
+
 fn expand_tracker_repeats(input: &str) -> Vec<String> {
     let mut lines = input.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
     let mut index = 0;
     let mut multiline_comment = false;
     while index < lines.len() {
         let line = lines[index].clone();
-        if line.starts_with("/*") {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
             multiline_comment = true;
         }
         let should_expand =
@@ -634,7 +2221,7 @@ fn expand_tracker_repeats(input: &str) -> Vec<String> {
             }
             lines.splice(index + 1..index + 1, insertions);
         }
-        if multiline_comment && line.ends_with("*/") {
+        if multiline_comment && stripped.ends_with("*/") {
             multiline_comment = false;
         }
         index += 1;
@@ -645,11 +2232,12 @@ fn expand_tracker_repeats(input: &str) -> Vec<String> {
 fn tracker_has_active_nopadding(input: &str) -> bool {
     let mut multiline_comment = false;
     for raw_line in input.lines() {
-        if raw_line.starts_with("/*") {
+        let stripped = raw_line.trim();
+        if stripped.starts_with("/*") {
             multiline_comment = true;
         }
         if multiline_comment {
-            if raw_line.ends_with("*/") {
+            if stripped.ends_with("*/") {
                 multiline_comment = false;
             }
             continue;
@@ -665,7 +2253,8 @@ fn protect_tracker_block_comment_repeats(input: &str) -> String {
     let mut multiline_comment = false;
     let mut lines = Vec::new();
     for raw_line in input.lines() {
-        if raw_line.starts_with("/*") {
+        let stripped = raw_line.trim();
+        if stripped.starts_with("/*") {
             multiline_comment = true;
         }
         if multiline_comment && (raw_line == "/repeat" || raw_line.starts_with("/repeat ")) {
@@ -676,7 +2265,7 @@ fn protect_tracker_block_comment_repeats(input: &str) -> String {
         } else {
             lines.push(raw_line.to_string());
         }
-        if multiline_comment && raw_line.ends_with("*/") {
+        if multiline_comment && stripped.ends_with("*/") {
             multiline_comment = false;
         }
     }
@@ -1143,7 +2732,7 @@ fn render_drops_item_inventory_command(
             }
             Err(error) => format!("Error: {error}"),
         },
-        _ => format!("Unsupported inventory command: {command} {item_name} {amount}"),
+        _ => "Error: Usage: inventory [show/get/buy/use/sell/switch/autosort] [...]".to_string(),
     }
 }
 
@@ -1589,11 +3178,11 @@ fn parse_drops_equipment(
         return Err(DropsEquipmentParseError::Slots);
     }
     let mut parsed_abilities = Vec::new();
-    for ability in abilities.iter().take(4) {
-        let ability = normalize_drops_ability_name(ability);
-        if data::autoability_gil_value(&ability).is_none() {
-            return Err(DropsEquipmentParseError::Ability);
+    for ability in abilities {
+        if parsed_abilities.len() >= 4 {
+            break;
         }
+        let ability = parse_drops_ability_name(ability).ok_or(DropsEquipmentParseError::Ability)?;
         if !parsed_abilities.contains(&ability) {
             parsed_abilities.push(ability);
         }
@@ -1609,6 +3198,20 @@ fn parse_drops_equipment(
         for_killer: false,
         ability_rolls: None,
     })
+}
+
+fn parse_drops_ability_name(value: &str) -> Option<String> {
+    data::autoability_names_in_order()
+        .into_iter()
+        .find(|ability| drops_autoability_value_key(ability) == value)
+        .map(normalize_drops_ability_name)
+}
+
+fn drops_autoability_value_key(value: &str) -> String {
+    value
+        .to_ascii_lowercase()
+        .replace(' ', "_")
+        .replace(['(', ')', '\''], "")
 }
 
 fn normalize_drops_ability_name(value: &str) -> String {
@@ -2339,13 +3942,14 @@ fn edit_encounters_tracker_output(output: &str, padding: bool) -> String {
     let mut lines = Vec::new();
     let mut multiline_comment = false;
     for raw_line in output.lines() {
-        if raw_line.starts_with("/*") {
+        let stripped = raw_line.trim();
+        if stripped.starts_with("/*") {
             multiline_comment = true;
         }
         if multiline_comment {
             let line = raw_line.replace("__ctb_tracker_block_comment_repeat__", "/repeat");
             lines.push(format!("# {line}"));
-            if raw_line.ends_with("*/") {
+            if stripped.ends_with("*/") {
                 multiline_comment = false;
             }
             continue;
@@ -2368,24 +3972,42 @@ fn edit_encounters_tracker_output(output: &str, padding: bool) -> String {
         if raw_line.starts_with("Equipment:") || raw_line.starts_with("Command:") {
             continue;
         }
-        let mut line = raw_line.to_string();
+        if raw_line.starts_with("encounter ") {
+            continue;
+        }
+        let commented = raw_line.strip_prefix("# ");
+        let summary_line = commented
+            .filter(|line| {
+                line.starts_with("Random Encounter:")
+                    || line.starts_with("Simulated Encounter:")
+                    || line.starts_with("Encounter:")
+                    || line.starts_with("Multizone encounter:")
+                    || line.starts_with("=====")
+            })
+            .unwrap_or(raw_line);
+        if summary_line.starts_with("=====") {
+            continue;
+        }
+        let mut line = summary_line.to_string();
         if line.starts_with("Random Encounter:") || line.starts_with("Simulated Encounter:") {
-            let mut parts = line.split('|').map(str::trim).collect::<Vec<_>>();
+            let mut parts = line.split('|').map(str::to_string).collect::<Vec<_>>();
             if parts.len() > 2 {
+                if parts.len() > 4 {
+                    parts[0].push(' ');
+                }
                 parts.pop();
                 parts.remove(1);
-                line = parts.join(" | ");
+                line = parts.join("|");
             }
         } else if line.starts_with("Encounter:") || line.starts_with("Multizone encounter:") {
-            let mut parts = line.split('|').map(str::trim).collect::<Vec<_>>();
+            let mut parts = line.split('|').map(str::to_string).collect::<Vec<_>>();
             if parts.len() > 2 {
                 parts.pop();
-                line = parts.join(" | ");
+                line = parts.join("|");
             }
         }
         line = line.replace("__ctb_tracker_block_comment_repeat__", "/repeat");
-        let line = line.trim().to_string();
-        if !line.is_empty() {
+        if !line.trim().is_empty() {
             lines.push(line);
         }
     }
@@ -2408,8 +4030,8 @@ fn edit_encounters_tracker_output(output: &str, padding: bool) -> String {
         output = output.replace("Encounter: ", "");
         let mut lines = output
             .lines()
-            .map(|line| line.trim().to_string())
-            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .filter(|line| !line.trim().is_empty())
             .collect::<Vec<_>>();
         let spacer = "=".repeat(lines.iter().map(|line| line.len()).max().unwrap_or(0));
         let mut index = 1;
@@ -2464,11 +4086,28 @@ fn party_swap_choices() -> [Character; 7] {
 fn current_encounter_at_line(input: &str, cursor_line: usize) -> Option<ctb::EncounterBlock> {
     let encounters = ctb::scan_encounters_from_text(input);
     for encounter in encounters.iter().rev() {
-        if cursor_line >= encounter.start_line {
+        if cursor_line >= encounter.start_line && cursor_line <= encounter.end_line {
             return Some(encounter.clone());
         }
     }
-    encounters.into_iter().next()
+    None
+}
+
+fn route_line_is_active(raw_line: &str, in_block_comment: &mut bool) -> bool {
+    let stripped = raw_line.trim();
+    if stripped.starts_with("/*") {
+        if !stripped.ends_with("*/") {
+            *in_block_comment = true;
+        }
+        return false;
+    }
+    if *in_block_comment {
+        if stripped.ends_with("*/") {
+            *in_block_comment = false;
+        }
+        return false;
+    }
+    true
 }
 
 struct ChocoboCursorState {
@@ -2535,6 +4174,13 @@ impl ChocoboCursorState {
                 continue;
             }
             if let Some(ctb) = self.state.character_ctb(*character) {
+                let ctb = if ctb == 0 {
+                    self.state
+                        .character_shadow_ctb_fallback(*character)
+                        .unwrap_or(ctb)
+                } else {
+                    ctb
+                };
                 shadow_ctbs.insert(*character, ctb);
             }
         }
@@ -2564,28 +4210,106 @@ fn simulate_to_chocobo_cursor_state(
     cursor_line: usize,
 ) -> ChocoboCursorState {
     let prepared = prepare_action_lines(input);
+    let prepared_prefix = prepare_action_lines_before_raw_line(input, cursor_line);
+    let encounter_parties = infer_chocobo_encounter_parties(&prepared.lines);
+    let encounter_party_swaps = infer_chocobo_encounter_party_swaps(&prepared.lines);
     let mut cursor_state = ChocoboCursorState::new(seed);
+    let mut current_party_plan: Option<Vec<Character>> = None;
     let mut multiline_comment = false;
-    for raw_line in prepared
-        .lines
-        .into_iter()
-        .take(cursor_line.saturating_sub(1))
-    {
-        if raw_line.starts_with("/*") {
-            multiline_comment = true;
-        }
-        if multiline_comment {
-            if raw_line.ends_with("*/") {
-                multiline_comment = false;
-            }
+    for (absolute_index, raw_line) in prepared_prefix.lines.into_iter().enumerate() {
+        if !route_line_is_active(&raw_line, &mut multiline_comment) {
             continue;
         }
         if raw_line.trim().is_empty() || raw_line.trim_start().starts_with('#') {
             continue;
         }
+        let command = parse_raw_action_line(&raw_line);
+        if matches!(command, ParsedCommand::Encounter { .. }) {
+            if encounter_party_swaps.contains(&absolute_index) {
+                current_party_plan = Some(cursor_state.state.party().to_vec());
+            } else if let Some(planned_party) = encounter_parties.get(&absolute_index) {
+                cursor_state.state.sync_party_if_needed(planned_party);
+                current_party_plan = Some(planned_party.clone());
+            } else {
+                current_party_plan = None;
+            }
+            cursor_state.shadow_ctbs = None;
+        }
+        if let (ParsedCommand::CharacterAction { actor, .. }, Some(planned_party)) =
+            (&command, current_party_plan.as_deref())
+        {
+            if !cursor_state.state.party().contains(actor) {
+                cursor_state.state.sync_party_if_needed(planned_party);
+            }
+        }
         cursor_state.apply_line(&raw_line);
+        if matches!(command, ParsedCommand::Party { .. }) {
+            current_party_plan = Some(cursor_state.state.party().to_vec());
+        }
     }
     cursor_state
+}
+
+fn infer_chocobo_encounter_parties(lines: &[String]) -> HashMap<usize, Vec<Character>> {
+    let mut encounter_parties = HashMap::new();
+    let mut current_encounter_index = None;
+    let mut current_party = Vec::new();
+    let mut in_block_comment = false;
+    for (index, raw_line) in lines.iter().enumerate() {
+        if !route_line_is_active(raw_line, &mut in_block_comment) {
+            continue;
+        }
+        if raw_line.trim().is_empty() || raw_line.starts_with('#') {
+            continue;
+        }
+        match parse_raw_action_line(raw_line) {
+            ParsedCommand::Encounter { .. } => {
+                if let Some(encounter_index) = current_encounter_index {
+                    if !current_party.is_empty() {
+                        encounter_parties.insert(encounter_index, current_party.clone());
+                    }
+                }
+                current_encounter_index = Some(index);
+                current_party.clear();
+            }
+            ParsedCommand::CharacterAction { actor, .. } => {
+                if !current_party.contains(&actor) {
+                    current_party.push(actor);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(encounter_index) = current_encounter_index {
+        if !current_party.is_empty() {
+            encounter_parties.insert(encounter_index, current_party);
+        }
+    }
+    encounter_parties
+}
+
+fn infer_chocobo_encounter_party_swaps(lines: &[String]) -> HashSet<usize> {
+    let mut encounter_party_swaps = HashSet::new();
+    let mut current_encounter_index = None;
+    let mut in_block_comment = false;
+    for (index, raw_line) in lines.iter().enumerate() {
+        if !route_line_is_active(raw_line, &mut in_block_comment) {
+            continue;
+        }
+        if raw_line.trim().is_empty() || raw_line.trim_start().starts_with('#') {
+            continue;
+        }
+        match parse_raw_action_line(raw_line) {
+            ParsedCommand::Encounter { .. } => current_encounter_index = Some(index),
+            ParsedCommand::Party { .. } => {
+                if let Some(encounter_index) = current_encounter_index {
+                    encounter_party_swaps.insert(encounter_index);
+                }
+            }
+            _ => {}
+        }
+    }
+    encounter_party_swaps
 }
 
 fn get_chocobo_effective_insert_line(
@@ -2595,12 +4319,15 @@ fn get_chocobo_effective_insert_line(
 ) -> usize {
     let lines = input.lines().collect::<Vec<_>>();
     let encounter_end = encounter.end_line.min(lines.len());
+    let mut in_block_comment = false;
     let haste_line = (encounter.start_line..=encounter_end).find(|line_number| {
         lines
             .get(line_number.saturating_sub(1))
             .is_some_and(|line| {
-                line.trim()
-                    .eq_ignore_ascii_case("tidus haste chocobo_eater")
+                route_line_is_active(line, &mut in_block_comment)
+                    && line
+                        .trim()
+                        .eq_ignore_ascii_case("tidus haste chocobo_eater")
             })
     });
     haste_line.map_or(cursor_line, |line| cursor_line.max(line + 1))
@@ -2798,9 +4525,15 @@ mod tests {
 
     use super::{
         chocobo_action_json, chocobo_swap_json, choose_chocobo_swap_replacement,
-        drops_autoability_values, drops_item_values, party_json, render_ctb_diff_json,
-        render_ctb_json, render_steal_line, sample_json, tracker_default_json, tracker_render_json,
-        ChocoboCursorState, DropsInventory, DEFAULT_SEED, DROPS_NOTES,
+        drops_autoability_values, drops_item_values, drops_search_first_ghost_line,
+        find_active_repeat_after_ghost, find_first_ghost_route_line,
+        first_ghost_search_window_input, garuda1_attacks_json, garuda2_attack_json,
+        lancet_tutorial_timing_json, no_encounters_routes_json,
+        parse_exact_future_encounter_output, party_json, render_ctb_diff_json, render_ctb_json,
+        render_steal_line, sample_json, simulate_to_chocobo_cursor_state,
+        synthesize_no_encounters_ghost_route, tanker_pattern_json, tracker_default_json,
+        tracker_render_json, tros_attack_json, ChocoboCursorState, DropsInventory, DEFAULT_INPUT,
+        DEFAULT_SEED, DROPS_NOTES,
     };
 
     #[test]
@@ -2859,6 +4592,36 @@ mod tests {
     }
 
     #[test]
+    fn party_payload_replays_macros_before_raw_cursor_line() {
+        let payload: Value = serde_json::from_str(
+            &party_json(
+                DEFAULT_SEED,
+                "/macro moonflow grid\nparty tw\nstatus atb\n",
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let party = payload["party"].as_array().unwrap();
+        assert_eq!(party[0]["input_name"], "tidus");
+        assert_eq!(party[1]["input_name"], "wakka");
+    }
+
+    #[test]
+    fn party_payload_uses_raw_cursor_line_after_default_macros() {
+        let payload: Value =
+            serde_json::from_str(&party_json(DEFAULT_SEED, DEFAULT_INPUT, 624).unwrap()).unwrap();
+        let party = payload["party"].as_array().unwrap();
+        assert_eq!(
+            party
+                .iter()
+                .map(|member| member["input_name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["tidus", "auron", "wakka"]
+        );
+    }
+
+    #[test]
     fn chocobo_action_payload_generates_insert_lines_inside_encounter() {
         let payload: Value = serde_json::from_str(
             &chocobo_action_json(
@@ -2881,11 +4644,69 @@ mod tests {
     }
 
     #[test]
+    fn chocobo_action_payload_ignores_block_commented_haste_insert_line() {
+        let payload: Value = serde_json::from_str(
+            &chocobo_action_json(
+                DEFAULT_SEED,
+                "encounter chocobo_eater\n/*\ntidus haste chocobo_eater\n*/\nstatus atb\n",
+                2,
+                "generic_attack",
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["insert_line"], 2);
+    }
+
+    #[test]
+    fn chocobo_action_payload_accepts_trailing_blank_line_inside_last_encounter() {
+        let payload: Value = serde_json::from_str(
+            &chocobo_action_json(
+                DEFAULT_SEED,
+                "encounter chocobo_eater\nstatus atb\n",
+                3,
+                "generic_attack",
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["insert_line"], 3);
+    }
+
+    #[test]
+    fn chocobo_action_payload_uses_raw_cursor_line_after_default_macros() {
+        let payload: Value = serde_json::from_str(
+            &chocobo_action_json(DEFAULT_SEED, DEFAULT_INPUT, 624, "generic_attack", None).unwrap(),
+        )
+        .unwrap();
+        let lines = payload["lines"].as_array().unwrap();
+        assert!(lines
+            .last()
+            .and_then(|line| line.as_str())
+            .is_some_and(|line| line.starts_with("m1 ")));
+    }
+
+    #[test]
     fn chocobo_action_payload_rejects_other_encounters() {
         let error = chocobo_action_json(
             DEFAULT_SEED,
             "encounter tanker\nstatus atb\n",
             2,
+            "generic_attack",
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("chocobo_eater encounter"));
+    }
+
+    #[test]
+    fn chocobo_action_payload_rejects_cursor_before_first_encounter() {
+        let error = chocobo_action_json(
+            DEFAULT_SEED,
+            "# route heading\nencounter chocobo_eater\nstatus atb\n",
+            1,
             "generic_attack",
             None,
         )
@@ -2906,6 +4727,428 @@ mod tests {
         assert!(error
             .to_string()
             .contains("active Chocobo Eater encounter state"));
+    }
+
+    #[test]
+    fn tanker_pattern_payload_builds_python_lines() {
+        let payload: Value = serde_json::from_str(
+            &tanker_pattern_json("encounter tanker\nstatus atb\n", 2, "awsdn-").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 2);
+        assert_eq!(payload["end_line"], 1);
+        let lines = payload["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|line| line.as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "m5 attack",
+                "m7 wings_flicker",
+                "m6 does_nothing",
+                "m2 does_nothing",
+                "m3 does_nothing",
+                "m4 does_nothing",
+                "m8 does_nothing",
+                "",
+                "m5 does_nothing",
+                "m7 spines",
+                "m6 does_nothing",
+                "m2 does_nothing",
+                "m3 does_nothing",
+                "m4 does_nothing",
+                "m8 does_nothing",
+            ]
+        );
+    }
+
+    #[test]
+    fn tanker_pattern_payload_rejects_invalid_pattern() {
+        let error = tanker_pattern_json("encounter tanker\n", 1, "a?").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Use 2 to 14 letters with only a, w, s, d, n, or -."));
+
+        let error = tanker_pattern_json("encounter tanker\n", 1, "a").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Use 2 to 14 letters with only a, w, s, d, n, or -."));
+    }
+
+    #[test]
+    fn tanker_pattern_payload_rejects_other_encounters() {
+        let error =
+            tanker_pattern_json("encounter chocobo_eater\nstatus atb\n", 2, "aa").unwrap_err();
+        assert!(error.to_string().contains("tanker encounter"));
+    }
+
+    #[test]
+    fn tanker_pattern_payload_rejects_cursor_before_first_encounter() {
+        let error = tanker_pattern_json("# route heading\nencounter tanker\nstatus atb\n", 1, "aa")
+            .unwrap_err();
+        assert!(error.to_string().contains("tanker encounter"));
+    }
+
+    #[test]
+    fn tanker_pattern_payload_replaces_existing_tanker_slots() {
+        let payload: Value = serde_json::from_str(
+            &tanker_pattern_json(
+                "encounter tanker\n# note\nm5 attack\nm7 attack\nstatus atb\nm8 attack\n",
+                4,
+                "aa",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 3);
+        assert_eq!(payload["end_line"], 6);
+    }
+
+    #[test]
+    fn tros_attack_payload_replaces_existing_first_attack_like_python_frontend() {
+        let payload: Value = serde_json::from_str(
+            &tros_attack_json("encounter tros\nstatus atb\nm1 attack\n", 3, "tentacles").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 3);
+        assert_eq!(payload["end_line"], 3);
+        assert_eq!(payload["lines"], serde_json::json!(["m1 tentacles"]));
+    }
+
+    #[test]
+    fn tros_attack_payload_inserts_at_cursor_when_missing_like_python_frontend() {
+        let payload: Value = serde_json::from_str(
+            &tros_attack_json("encounter tros\nstatus atb\n", 2, "attack").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 2);
+        assert_eq!(payload["end_line"], 1);
+        assert_eq!(payload["lines"], serde_json::json!(["m1 attack"]));
+    }
+
+    #[test]
+    fn tros_attack_payload_ignores_block_commented_first_attack() {
+        let payload: Value = serde_json::from_str(
+            &tros_attack_json(
+                "encounter tros\n/*\nm1 tentacles\n*/\nstatus atb\n",
+                5,
+                "attack",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 5);
+        assert_eq!(payload["end_line"], 4);
+    }
+
+    #[test]
+    fn tros_attack_payload_rejects_invalid_context_or_attack() {
+        let error = tros_attack_json("encounter tanker\nstatus atb\n", 2, "attack").unwrap_err();
+        assert!(error.to_string().contains("tros encounter"));
+
+        let error = tros_attack_json("encounter tros\n", 1, "sonic_boom").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Use attack or tentacles for the Tros first attack."));
+    }
+
+    #[test]
+    fn garuda1_attacks_payload_replaces_matching_rows_and_preserves_notes() {
+        let payload: Value = serde_json::from_str(
+            &garuda1_attacks_json(
+                "encounter garuda_1\n# note\nm1 attack\nm1 sonic_boom\n#m1 attack\n",
+                3,
+                "attack,sonic_boom,attack,sonic_boom,attack",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 1);
+        assert_eq!(payload["end_line"], 5);
+        assert_eq!(
+            payload["lines"],
+            serde_json::json!([
+                "encounter garuda_1",
+                "# note",
+                "m1 attack",
+                "m1 sonic_boom",
+                "m1 attack",
+                "m1 sonic_boom",
+                "m1 attack"
+            ])
+        );
+    }
+
+    #[test]
+    fn garuda1_attacks_payload_inserts_at_cursor_when_missing() {
+        let payload: Value = serde_json::from_str(
+            &garuda1_attacks_json(
+                "encounter garuda_1\nstatus atb\n",
+                2,
+                "attack,attack,sonic_boom,attack,sonic_boom",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 2);
+        assert_eq!(payload["end_line"], 1);
+        assert_eq!(
+            payload["lines"],
+            serde_json::json!([
+                "m1 attack",
+                "m1 attack",
+                "m1 sonic_boom",
+                "m1 attack",
+                "m1 sonic_boom"
+            ])
+        );
+    }
+
+    #[test]
+    fn garuda1_attacks_payload_ignores_block_commented_rows() {
+        let payload: Value = serde_json::from_str(
+            &garuda1_attacks_json(
+                "encounter garuda_1\n/*\nm1 attack\n*/\nstatus atb\n",
+                5,
+                "attack,attack,attack,attack,attack",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 5);
+        assert_eq!(payload["end_line"], 4);
+    }
+
+    #[test]
+    fn garuda1_attacks_payload_rejects_invalid_context_or_actions() {
+        let error = garuda1_attacks_json(
+            "encounter garuda_2\nstatus atb\n",
+            2,
+            "attack,attack,attack,attack,attack",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("garuda_1 encounter"));
+
+        let error = garuda1_attacks_json("encounter garuda_1\n", 1, "attack,attack,sonic_boom")
+            .unwrap_err();
+        assert!(error.to_string().contains("Use exactly 5 Garuda 1 attacks"));
+    }
+
+    #[test]
+    fn garuda2_attack_payload_replaces_matching_row() {
+        let payload: Value = serde_json::from_str(
+            &garuda2_attack_json(
+                DEFAULT_SEED,
+                "encounter garuda_2\n# note\nm1 attack\n",
+                3,
+                "sonic_boom",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 1);
+        assert_eq!(payload["end_line"], 3);
+        assert_eq!(
+            payload["lines"],
+            serde_json::json!(["encounter garuda_2", "# note", "m1 sonic_boom"])
+        );
+    }
+
+    #[test]
+    fn garuda2_attack_payload_removes_matching_row_for_does_nothing() {
+        let payload: Value = serde_json::from_str(
+            &garuda2_attack_json(
+                DEFAULT_SEED,
+                "encounter garuda_2\nm1 sonic_boom\nstatus atb\n",
+                2,
+                "does_nothing",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            payload["lines"],
+            serde_json::json!(["encounter garuda_2", "status atb"])
+        );
+    }
+
+    #[test]
+    fn garuda2_attack_payload_noops_does_nothing_when_no_row_exists() {
+        let payload: Value = serde_json::from_str(
+            &garuda2_attack_json(
+                DEFAULT_SEED,
+                "encounter garuda_2\nstatus atb\n",
+                2,
+                "does_nothing",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 2);
+        assert_eq!(payload["end_line"], 1);
+        assert_eq!(payload["lines"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn garuda2_attack_payload_inserts_after_opening_party_turns_like_python_frontend() {
+        let payload: Value = serde_json::from_str(
+            &garuda2_attack_json(
+                DEFAULT_SEED,
+                "party tyl\n\nencounter garuda_2\ntidus escape\nyuna escape\nlulu escape\n",
+                5,
+                "attack",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 7);
+        assert_eq!(payload["end_line"], 6);
+        assert_eq!(payload["lines"], serde_json::json!(["m1 attack"]));
+    }
+
+    #[test]
+    fn garuda2_attack_payload_falls_back_to_end_when_no_opening_cue_exists() {
+        let payload: Value = serde_json::from_str(
+            &garuda2_attack_json(
+                DEFAULT_SEED,
+                "encounter garuda_2\nstatus atb\n",
+                2,
+                "sonic_boom",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 3);
+        assert_eq!(payload["end_line"], 2);
+        assert_eq!(payload["lines"], serde_json::json!(["m1 sonic_boom"]));
+    }
+
+    #[test]
+    fn garuda2_attack_payload_rejects_invalid_context_or_attack() {
+        let error =
+            garuda2_attack_json(DEFAULT_SEED, "encounter garuda_1\nm1 attack\n", 2, "attack")
+                .unwrap_err();
+        assert!(error.to_string().contains("garuda_2 encounter"));
+
+        let error =
+            garuda2_attack_json(DEFAULT_SEED, "encounter garuda_2\n", 1, "tentacles").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Use attack, sonic_boom, or does_nothing for Garuda 2."));
+    }
+
+    #[test]
+    fn lancet_tutorial_payload_toggles_ragora_lines_before_lancet() {
+        let payload: Value = serde_json::from_str(
+            &lancet_tutorial_timing_json(
+                "encounter lancet_tutorial\n# note\n#m1 seed_cannon_kimahri\nm1 seed_cannon\n",
+                3,
+                "before",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 1);
+        assert_eq!(payload["end_line"], 4);
+        assert_eq!(
+            payload["lines"],
+            serde_json::json!([
+                "encounter lancet_tutorial",
+                "# note",
+                "m1 seed_cannon_kimahri",
+                "#m1 seed_cannon"
+            ])
+        );
+    }
+
+    #[test]
+    fn lancet_tutorial_payload_toggles_ragora_lines_after_lancet() {
+        let payload: Value = serde_json::from_str(
+            &lancet_tutorial_timing_json(
+                "encounter lancet_tutorial\nm1 seed_cannon_kimahri\n#m1 seed_cannon\n",
+                2,
+                "after",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            payload["lines"],
+            serde_json::json!([
+                "encounter lancet_tutorial",
+                "#m1 seed_cannon_kimahri",
+                "m1 seed_cannon"
+            ])
+        );
+    }
+
+    #[test]
+    fn lancet_tutorial_payload_rejects_missing_or_block_commented_lines() {
+        let error = lancet_tutorial_timing_json(
+            "encounter lancet_tutorial\n/*\nm1 seed_cannon_kimahri\n*/\nm1 seed_cannon\n",
+            5,
+            "before",
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Could not find both Ragora attack lines"));
+    }
+
+    #[test]
+    fn lancet_tutorial_payload_rejects_invalid_context_or_timing() {
+        let error = lancet_tutorial_timing_json(
+            "encounter garuda_1\nm1 seed_cannon_kimahri\nm1 seed_cannon\n",
+            2,
+            "before",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("lancet_tutorial encounter"));
+
+        let error =
+            lancet_tutorial_timing_json("encounter lancet_tutorial\n", 1, "during").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Use before or after for the Lancet Tutorial timing."));
+    }
+
+    #[test]
+    fn tanker_pattern_payload_ignores_block_commented_tanker_slots() {
+        let payload: Value = serde_json::from_str(
+            &tanker_pattern_json("encounter tanker\n/*\nm5 attack\n*/\nstatus atb\n", 5, "aa")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 5);
+        assert_eq!(payload["end_line"], 4);
+    }
+
+    #[test]
+    fn tanker_pattern_payload_keeps_block_comment_open_until_trailing_marker_like_python() {
+        let payload: Value = serde_json::from_str(
+            &tanker_pattern_json(
+                "encounter tanker\n/* m5 attack */ trailing text\nm5 attack\nnote */\nstatus atb\n",
+                5,
+                "aa",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 5);
+        assert_eq!(payload["end_line"], 4);
+    }
+
+    #[test]
+    fn tanker_pattern_payload_accepts_trailing_blank_line_inside_last_encounter() {
+        let payload: Value = serde_json::from_str(
+            &tanker_pattern_json("encounter tanker\nstatus atb\n", 3, "aa").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["start_line"], 3);
+        assert_eq!(payload["end_line"], 2);
     }
 
     #[test]
@@ -2995,6 +5238,97 @@ mod tests {
             .copied()
             .expect("Wakka shadow CTB should remain tracked after status atb");
         assert_eq!(after_status, before_status);
+    }
+
+    #[test]
+    fn chocobo_cursor_replay_skips_indented_block_comments_like_python() {
+        let mut baseline = ChocoboCursorState::new(DEFAULT_SEED);
+        baseline.apply_line("encounter chocobo_eater");
+        baseline.apply_line("party taw");
+        baseline.apply_line("party ta");
+        baseline.apply_line("tidus defend");
+        let expected = baseline
+            .shadow_ctbs
+            .as_ref()
+            .and_then(|shadow| shadow.get(&crate::model::Character::Wakka))
+            .copied()
+            .expect("Wakka shadow CTB should be tracked after swapping out");
+
+        let cursor_state = simulate_to_chocobo_cursor_state(
+            DEFAULT_SEED,
+            "encounter chocobo_eater\nparty taw\nparty ta\ntidus defend\n  /*\ntidus defend\n  */\nstatus atb\n",
+            8,
+        );
+        let actual = cursor_state
+            .shadow_ctbs
+            .as_ref()
+            .and_then(|shadow| shadow.get(&crate::model::Character::Wakka))
+            .copied()
+            .expect("Wakka shadow CTB should remain tracked after block comments");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn chocobo_cursor_replay_ends_block_comments_on_trailing_marker_like_python() {
+        let mut baseline = ChocoboCursorState::new(DEFAULT_SEED);
+        baseline.apply_line("encounter chocobo_eater");
+        baseline.apply_line("party taw");
+        baseline.apply_line("party ta");
+        baseline.apply_line("tidus defend");
+        baseline.apply_line("tidus defend");
+        let expected = baseline
+            .shadow_ctbs
+            .as_ref()
+            .and_then(|shadow| shadow.get(&crate::model::Character::Wakka))
+            .copied()
+            .expect("Wakka shadow CTB should be tracked after two active turns");
+
+        let cursor_state = simulate_to_chocobo_cursor_state(
+            DEFAULT_SEED,
+            "encounter chocobo_eater\nparty taw\nparty ta\ntidus defend\n/*\ntidus defend\nnote */\ntidus defend\nstatus atb\n",
+            9,
+        );
+        let actual = cursor_state
+            .shadow_ctbs
+            .as_ref()
+            .and_then(|shadow| shadow.get(&crate::model::Character::Wakka))
+            .copied()
+            .expect("Wakka shadow CTB should remain tracked after trailing comment close");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn chocobo_cursor_replay_infers_encounter_party_from_character_rows_like_python() {
+        let cursor_state = simulate_to_chocobo_cursor_state(
+            DEFAULT_SEED,
+            "encounter chocobo_eater\ntidus defend\nlulu defend\nstatus atb\n",
+            4,
+        );
+        assert_eq!(
+            cursor_state.state.party(),
+            &[
+                crate::model::Character::Tidus,
+                crate::model::Character::Lulu
+            ]
+        );
+    }
+
+    #[test]
+    fn chocobo_cursor_replay_prefers_explicit_party_swaps_over_inferred_rows_like_python() {
+        let cursor_state = simulate_to_chocobo_cursor_state(
+            DEFAULT_SEED,
+            "encounter chocobo_eater\nlulu defend\nparty ta\nstatus atb\n",
+            3,
+        );
+        assert_eq!(
+            cursor_state.state.party(),
+            &[
+                crate::model::Character::Tidus,
+                crate::model::Character::Auron
+            ]
+        );
     }
 
     #[test]
@@ -3099,6 +5433,16 @@ mod tests {
     }
 
     #[test]
+    fn chocobo_swap_payload_uses_raw_cursor_line_after_default_macros() {
+        let payload: Value = serde_json::from_str(
+            &chocobo_swap_json(DEFAULT_SEED, DEFAULT_INPUT, 624, 1, "lulu").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["insert_line"], 624);
+        assert_eq!(payload["lines"][0], "party tlw");
+    }
+
+    #[test]
     fn tracker_default_payloads_match_web_editor_shape() {
         let drops: Value =
             serde_json::from_str(&tracker_default_json("drops", DEFAULT_SEED).unwrap()).unwrap();
@@ -3167,6 +5511,50 @@ mod tests {
     }
 
     #[test]
+    fn encounters_tracker_boss_rows_match_python_exactly() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "encounters",
+                DEFAULT_SEED,
+                "/nopadding\nencounter tanker\nencounter sahagins\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            concat!(
+                "  1 | Tanker | Tanker, Sinscale#6, Sinscale#6, Sinscale#6, ",
+                "Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6 \n",
+                "  2 | Sahagins | Sahagin#4, Sahagin#4, Sahagin#4\n",
+            )
+        );
+    }
+
+    #[test]
+    fn encounters_tracker_padded_boss_rows_match_python_exactly() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "encounters",
+                DEFAULT_SEED,
+                "encounter tanker\nencounter sahagins\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            concat!(
+                "  1 | Tanker   | Tanker, Sinscale#6, Sinscale#6, Sinscale#6, ",
+                "Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6\n",
+                "  2 | Sahagins | Sahagin#4, Sahagin#4, Sahagin#4\n",
+            )
+        );
+    }
+
+    #[test]
     fn encounters_tracker_handles_directives_like_python_tracker() {
         let payload: Value = serde_json::from_str(
             &tracker_render_json(
@@ -3178,7 +5566,10 @@ mod tests {
         )
         .unwrap();
         let output = payload["output"].as_str().unwrap();
-        assert!(output.starts_with("2 | Sahagins"), "{output}");
+        assert!(
+            output.starts_with("  2 | Sahagins | Sahagin#4, Sahagin#4, Sahagin#4\n"),
+            "{output}"
+        );
         assert!(!output.contains("/usage"), "{output}");
         assert!(!output.contains("/nopadding"), "{output}");
         assert!(!output.contains("Possible macros"), "{output}");
@@ -3194,6 +5585,32 @@ mod tests {
         let output = payload["output"].as_str().unwrap();
         assert!(output.contains("encounters_count"), "{output}");
         assert!(!output.contains("Command: /usage please"), "{output}");
+    }
+
+    #[test]
+    fn encounters_tracker_macro_and_unknown_directives_match_python() {
+        let macro_payload: Value = serde_json::from_str(
+            &tracker_render_json("encounters", DEFAULT_SEED, "/nopadding\n/macro nope\n").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(macro_payload["output"], "Error: Possible macros are\n");
+
+        let unknown_payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "encounters",
+                DEFAULT_SEED,
+                "/nopadding\n/notreal\nencounter tanker\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            unknown_payload["output"],
+            concat!(
+                "  1 | Tanker | Tanker, Sinscale#6, Sinscale#6, Sinscale#6, ",
+                "Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6\n",
+            )
+        );
     }
 
     #[test]
@@ -3214,6 +5631,78 @@ mod tests {
     }
 
     #[test]
+    fn encounters_tracker_count_rows_and_multizone_cleanup_match_python() {
+        let count_payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "encounters",
+                1,
+                concat!(
+                    "/nopadding\n",
+                    "encounters_count total 5\n",
+                    "encounters_count random +2\n",
+                ),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            count_payload["output"],
+            "Total encounters count set to 5\nRandom encounters count set to 2\n"
+        );
+
+        let zone_count_payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "encounters",
+                1,
+                "/nopadding\nencounter besaid_road\nencounters_count besaid_road +2\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            zone_count_payload["output"],
+            "  1   1   1 | Condor, Water Flan \nBesaid Road encounters count set to 3\n"
+        );
+
+        let multizone_payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "encounters",
+                1,
+                "/nopadding\nencounter multizone besaid_road kilika_woods\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            multizone_payload["output"],
+            "  1   1   1  | Condor, Water Flan | Ragora, Killer Bee, Killer Bee\n"
+        );
+    }
+
+    #[test]
+    fn encounters_tracker_simulated_and_condition_aliases_match_python() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "encounters",
+                1,
+                "/nopadding\nencounter simulated\nencounter normal\nencounter preemptive\nencounter ambush\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            concat!(
+                "  0 | Empty \n",
+                "  1 | Boss | Empty \n",
+                "  2 | Boss | Empty Preemptive \n",
+                "  3 | Boss | Empty Ambush\n",
+            )
+        );
+    }
+
+    #[test]
     fn encounters_tracker_inserts_section_spacers_like_python() {
         let payload: Value = serde_json::from_str(
             &tracker_render_json(
@@ -3228,6 +5717,32 @@ mod tests {
         assert!(output.starts_with("#    First\n"), "{output}");
         assert!(output.contains("\n===="), "{output}");
         assert!(output.contains("\n#    Second\n"), "{output}");
+    }
+
+    #[test]
+    fn encounters_tracker_section_spacers_match_python_exactly() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "encounters",
+                DEFAULT_SEED,
+                "/nopadding\n#    First\nencounter tanker\n#    Second\nencounter tanker\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            concat!(
+                "#    First\n",
+                "  1 | Tanker | Tanker, Sinscale#6, Sinscale#6, Sinscale#6, ",
+                "Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6 \n",
+                "==========================================================================================================\n",
+                "#    Second\n",
+                "  2 | Tanker | Tanker, Sinscale#6, Sinscale#6, Sinscale#6, ",
+                "Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6\n",
+            )
+        );
     }
 
     #[test]
@@ -3303,6 +5818,35 @@ mod tests {
         assert_eq!(payload["tracker"], "drops");
         let output = payload["output"].as_str().unwrap();
         assert_eq!(output, "Steal: Tanker | Failed\nTanker        | - | 0 AP\n");
+    }
+
+    #[test]
+    fn drops_tracker_render_payload_accepts_generated_search_result_preamble() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "drops",
+                DEFAULT_SEED,
+                concat!(
+                    "Drop Search Result\n",
+                    "Policy: {}\n",
+                    "No Encounters armor: None (drop #-)\n",
+                    "\n",
+                    "Resolved drop route\n",
+                    "party ta\n",
+                    "sinscale_6 auron\n",
+                ),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+        assert!(
+            output.starts_with("Party: Tidus, Auron -> Tidus, Auron\n"),
+            "{output}"
+        );
+        assert!(output.contains("Sinscale#6"), "{output}");
+        assert!(!output.contains("Impossible to parse"), "{output}");
+        assert!(!output.contains("Policy:"), "{output}");
     }
 
     #[test]
@@ -3576,6 +6120,67 @@ mod tests {
     }
 
     #[test]
+    fn drops_tracker_inventory_switch_and_autosort_order_like_python() {
+        let switched: Value = serde_json::from_str(
+            &tracker_render_json(
+                "drops",
+                DEFAULT_SEED,
+                concat!(
+                    "/nopadding\n",
+                    "inventory get potion 1\n",
+                    "inventory get antidote 1\n",
+                    "inventory switch 1 3\n",
+                    "inventory show\n",
+                ),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            switched["output"],
+            concat!(
+                "Command: /nopadding\n",
+                "Added Potion x1 to inventory\n",
+                "Added Antidote x1 to inventory\n",
+                "Switched Potion (slot 1) for Antidote (slot 3)\n",
+                "+------------+----------------+\n",
+                "| Antidote 1 | Phoenix Down 3 |\n",
+                "| Potion  11 | -              |\n",
+                "+------------+----------------+\n",
+            )
+        );
+
+        let autosorted: Value = serde_json::from_str(
+            &tracker_render_json(
+                "drops",
+                DEFAULT_SEED,
+                concat!(
+                    "/nopadding\n",
+                    "inventory get antidote 1\n",
+                    "inventory get potion 1\n",
+                    "inventory autosort\n",
+                    "inventory show\n",
+                ),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            autosorted["output"],
+            concat!(
+                "Command: /nopadding\n",
+                "Added Antidote x1 to inventory\n",
+                "Added Potion x1 to inventory\n",
+                "Autosorted inventory\n",
+                "+------------+----------------+\n",
+                "| Potion  11 | Phoenix Down 3 |\n",
+                "| Antidote 1 | -              |\n",
+                "+------------+----------------+\n",
+            )
+        );
+    }
+
+    #[test]
     fn drops_tracker_render_payload_reports_inventory_usage_errors_like_python() {
         let payload: Value = serde_json::from_str(
             &tracker_render_json(
@@ -3590,6 +6195,7 @@ mod tests {
                     "inventory switch\n",
                     "inventory switch -1 2\n",
                     "inventory sell equipment\n",
+                    "inventory sell equipment -1\n",
                     "inventory sell equipment weapon\n",
                     "inventory get equipment weapon tidus\n",
                     "inventory buy equipment\n",
@@ -3610,10 +6216,61 @@ mod tests {
                 "Error: Usage: inventory switch [slot 1] [slot 2]\n",
                 "Error: Inventory slot needs to be between 1 and 112\n",
                 "Error: Usage: inventory sell equipment [equipment slot]\n",
+                "Error: Usage: inventory sell equipment [equipment slot]\n",
                 "Error: Usage: inventory sell equipment [equip type] [character] [slots] (abilities)\n",
                 "Error: Usage: inventory get equipment [equip type] [character] [slots] (abilities)\n",
                 "Error: Usage: inventory buy equipment [equip type] [character] [slots] (abilities)\n",
                 "Error: Usage: inventory [show/get/buy/use/sell/switch/autosort] [...]\n",
+            )
+        );
+    }
+
+    #[test]
+    fn drops_tracker_inventory_amount_and_slot_errors_match_python() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "drops",
+                DEFAULT_SEED,
+                concat!(
+                    "inventory get potion nope\n",
+                    "inventory get potion -1\n",
+                    "inventory use potion nope\n",
+                    "inventory use potion -1\n",
+                    "inventory sell potion nope\n",
+                    "inventory sell potion -1\n",
+                    "inventory buy potion nope\n",
+                    "inventory buy potion -1\n",
+                    "inventory get gil nope\n",
+                    "inventory get gil -1\n",
+                    "inventory use gil nope\n",
+                    "inventory use gil -1\n",
+                    "inventory switch nope 2\n",
+                    "inventory switch 1 nope\n",
+                    "inventory switch 113 1\n",
+                ),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            concat!(
+                "Error: Amount needs to be an integer\n",
+                "Error: Amount needs to be more than 0\n",
+                "Error: Amount needs to be an integer\n",
+                "Error: Amount needs to be more than 0\n",
+                "Error: Amount needs to be an integer\n",
+                "Error: Amount needs to be more than 0\n",
+                "Error: Amount needs to be an integer\n",
+                "Error: Amount needs to be more than 0\n",
+                "Error: Gil amount needs to be an integer\n",
+                "Error: Gil amount needs to be more than 0\n",
+                "Error: Gil amount needs to be an integer\n",
+                "Error: Gil amount needs to be more than 0\n",
+                "Error: Inventory slot needs to be an integer\n",
+                "Error: Inventory slot needs to be an integer\n",
+                "Error: Inventory slot needs to be between 1 and 112\n",
             )
         );
     }
@@ -3664,6 +6321,63 @@ mod tests {
             )
         );
         assert_eq!(payload["output"], expected);
+    }
+
+    #[test]
+    fn drops_tracker_equipment_abilities_use_python_spellings() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "drops",
+                DEFAULT_SEED,
+                "inventory get equipment armor tidus 1 auto-haste\ninventory get equipment armor tidus 1 auto_haste\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            format!(
+                "{}{}",
+                "Added Haste Shield (Tidus) [Auto-Haste][12512 gil]\n",
+                format!(
+                    "Error: ability can only be one of these values: {}\n",
+                    drops_autoability_values()
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn drops_tracker_equipment_slot_and_ability_limits_match_python() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "drops",
+                DEFAULT_SEED,
+                concat!(
+                    "inventory get equipment weapon tidus 1 sensor sensor\n",
+                    "inventory get equipment weapon tidus 1 sensor first_strike initiative piercing alchemy\n",
+                    "inventory get equipment weapon tidus 1 sensor sensor first_strike initiative piercing\n",
+                    "inventory get equipment weapon tidus 1 sensor first_strike initiative piercing nope\n",
+                    "inventory get equipment weapon tidus 0 sensor\n",
+                    "inventory get equipment weapon tidus 0\n",
+                ),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            concat!(
+                "Added Hunter's Sword (Tidus) [Sensor][62 gil]\n",
+                "Added Sonic Steel (Tidus) [Sensor, First Strike, Initiative, Piercing][15312 gil]\n",
+                "Added Sonic Steel (Tidus) [Sensor, First Strike, Initiative, Piercing][15312 gil]\n",
+                "Added Sonic Steel (Tidus) [Sensor, First Strike, Initiative, Piercing][15312 gil]\n",
+                "Added Hunter's Sword (Tidus) [Sensor][62 gil]\n",
+                "Added Longsword (Tidus) [][12 gil]\n",
+            )
+        );
     }
 
     #[test]
@@ -3779,7 +6493,7 @@ mod tests {
                 DEFAULT_SEED,
                 concat!(
                     "inventory get equipment weapon tidus 1 sensor\n",
-                    "inventory get equipment armor tidus 1 auto_haste\n",
+                    "inventory get equipment armor tidus 1 auto-haste\n",
                     "inventory sell equipment 1\n",
                     "inventory show equipment\n",
                 ),
@@ -3808,7 +6522,7 @@ mod tests {
                     "inventory get equipment armor tidus 4 break_hp_limit break_mp_limit\n",
                     "inventory get equipment armor tidus 4 fireproof iceproof lightningproof waterproof\n",
                     "inventory get equipment weapon seymour 1 sensor\n",
-                    "inventory get equipment armor valefor 1 auto_haste\n",
+                    "inventory get equipment armor valefor 1 auto-haste\n",
                 ),
             )
             .unwrap(),
@@ -3883,6 +6597,25 @@ mod tests {
             "Error: Possible macros are\nError: Possible macros are\n"
         );
 
+        let macro_with_nopadding: Value = serde_json::from_str(
+            &tracker_render_json("drops", DEFAULT_SEED, "/nopadding\n/macro nope\n").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            macro_with_nopadding["output"],
+            "Command: /nopadding\nError: Possible macros are\n"
+        );
+
+        let unknown_directive: Value = serde_json::from_str(
+            &tracker_render_json("drops", DEFAULT_SEED, "/nopadding\n/notreal\nparty ta\n")
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            unknown_directive["output"],
+            "Command: /nopadding\nCommand: /notreal\nParty: Tidus, Auron -> Tidus, Auron\n"
+        );
+
         let unknown: Value = serde_json::from_str(
             &tracker_render_json("drops", DEFAULT_SEED, "definitely unknown\n").unwrap(),
         )
@@ -3915,6 +6648,20 @@ mod tests {
         assert_eq!(
             payload["output"],
             "# /*\n# party tw\n# */\nParty: Tidus, Auron -> Tidus, Yuna\n"
+        );
+    }
+
+    #[test]
+    fn drops_tracker_render_payload_preserves_indented_block_comments_without_effects() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json("drops", DEFAULT_SEED, "  /*\nparty tw\n  */\nparty ty\n")
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            "#   /*\n# party tw\n#   */\nParty: Tidus, Auron -> Tidus, Yuna\n"
         );
     }
 
@@ -4090,6 +6837,950 @@ mod tests {
         let output = payload["output"].as_str().unwrap();
         assert!(output.contains("Tanker | - | 0 AP to K"), "{output}");
         assert!(output.contains("Tanker | - | 0 AP to T (OK)"), "{output}");
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_empty_input_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(DEFAULT_SEED, "", 1, None, None).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(payload["output"], "No Encounters search: input is empty.");
+        assert_eq!(payload["edited_input"], "");
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_whitespace_input_as_missing_ghost_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(DEFAULT_SEED, " \n\t\n", 1, None, None).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            "No Encounters search: no Ghost line was found below the cursor."
+        );
+        assert_eq!(payload["edited_input"], " \n\t");
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_missing_ghost_below_cursor_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "piranha tidus\n/*\nkill ghost tidus\n*/\n",
+                1,
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            "No Encounters search: no Ghost line was found below the cursor."
+        );
+        assert_eq!(
+            payload["edited_input"],
+            "kill piranha tidus\n/*\nkill ghost tidus\n*/"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_counts_commented_ghost_as_optional_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(DEFAULT_SEED, "# ghost ixion\n", 1, None, None).unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(output.starts_with("No Encounters search:\n"), "{output}");
+        assert!(
+            output.contains("Cursor line 1, first Ghost line 1, tested 0 route(s)."),
+            "{output}"
+        );
+        assert!(output.contains("Search mode: notes-fallback."), "{output}");
+        assert!(output.contains("Future random sections: none."), "{output}");
+        assert!(
+            output
+                .contains("No route found that gives a No Encounters armor from the first Ghost."),
+            "{output}"
+        );
+        assert!(output.contains("Candidates tested: 0"), "{output}");
+        assert!(!output.contains("no Ghost line was found"), "{output}");
+        assert_eq!(payload["edited_input"], "# ghost ixion");
+    }
+
+    #[test]
+    fn no_encounters_routes_ignores_ghost_inside_indented_block_comment_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(DEFAULT_SEED, "  /*\nghost ixion\n  */\n", 1, None, None)
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            "No Encounters search: no Ghost line was found below the cursor."
+        );
+        assert_eq!(payload["edited_input"], "  /*\nkill ghost ixion\n  */");
+    }
+
+    #[test]
+    fn exact_future_encounter_output_parses_rows_and_stops_at_ghost_like_python() {
+        let parsed = parse_exact_future_encounter_output(
+            concat!(
+                "# Kilika:\n",
+                "1 | Ragora, Killer Bee Normal\n",
+                "2 | Ghost Normal\n",
+                "3 | Piranha Normal\n",
+            ),
+            "",
+        )
+        .expect("future encounter output should parse");
+
+        assert_eq!(parsed.rows.len(), 2);
+        assert!(parsed.rows[0].random);
+        assert_eq!(
+            parsed.rows[0].encounter_options,
+            vec![vec!["ragora".to_string(), "killer_bee".to_string()]]
+        );
+        assert_eq!(
+            parsed.rows[1].encounter_options,
+            vec![vec!["ghost".to_string()]]
+        );
+        assert_eq!(parsed.total_counts.get("ragora"), Some(&1));
+        assert_eq!(parsed.total_counts.get("killer_bee"), Some(&1));
+        assert_eq!(parsed.total_counts.get("ghost"), Some(&1));
+        assert_eq!(
+            parsed
+                .section_maxima
+                .get("Kilika")
+                .and_then(|counts| counts.get("ghost")),
+            Some(&1)
+        );
+        assert!(!parsed.total_counts.contains_key("piranha"));
+    }
+
+    #[test]
+    fn exact_future_encounter_output_normalizes_purifico_underwater_section_like_python() {
+        let parsed = parse_exact_future_encounter_output(
+            concat!(
+                "# Via Purifico (Maze):\n",
+                "1 | Sahagin Normal\n",
+                "# Via Purifico (Underwater):\n",
+                "1 | Ghost Normal\n",
+            ),
+            "Underwater",
+        )
+        .expect("underwater future rows should parse from the mapped section");
+
+        assert_eq!(parsed.rows.len(), 1);
+        assert_eq!(parsed.total_counts.get("ghost"), Some(&1));
+        assert!(!parsed.total_counts.contains_key("sahagin"));
+        assert_eq!(
+            parsed
+                .section_maxima
+                .get("Underwater")
+                .and_then(|counts| counts.get("ghost")),
+            Some(&1)
+        );
+    }
+
+    #[test]
+    fn exact_future_encounter_output_normalizes_bevelle_guard_labels_like_python() {
+        let parsed = parse_exact_future_encounter_output(
+            "1 | bevelle_guards_1 | Warrior Monk Normal\n2 | Ghost Normal\n",
+            "Bevelle",
+        )
+        .expect("Bevelle guard label should start the Bevelle future section");
+
+        assert_eq!(parsed.rows.len(), 2);
+        assert_eq!(parsed.total_counts.get("warrior_monk"), Some(&1));
+        assert_eq!(parsed.total_counts.get("ghost"), Some(&1));
+    }
+
+    #[test]
+    fn exact_future_encounter_output_parses_raw_ctb_random_rows() {
+        let parsed = parse_exact_future_encounter_output(
+            concat!(
+                "Random Encounter:   1   1   1 | Kilika Woods | Ragora, Killer Bee Normal\n",
+                "Random Encounter:   2   2   2 | Kilika Woods | Ghost Normal\n",
+                "Random Encounter:   3   3   3 | Kilika Woods | Piranha Normal\n",
+            ),
+            "Kilika",
+        )
+        .expect("raw CTB random rows should parse");
+
+        assert_eq!(parsed.rows.len(), 2);
+        assert!(parsed.rows[0].random);
+        assert_eq!(
+            parsed.rows[0].encounter_options,
+            vec![vec!["ragora".to_string(), "killer_bee".to_string()]]
+        );
+        assert_eq!(parsed.total_counts.get("ghost"), Some(&1));
+        assert_eq!(
+            parsed
+                .section_maxima
+                .get("Kilika")
+                .and_then(|counts| counts.get("ragora")),
+            Some(&1)
+        );
+        assert!(!parsed.total_counts.contains_key("piranha"));
+    }
+
+    #[test]
+    fn exact_future_encounter_output_parses_raw_ctb_fixed_rows_as_not_random() {
+        let parsed = parse_exact_future_encounter_output(
+            concat!(
+                "Encounter:   1 | Kilika Woods | Ragora Normal\n",
+                "Encounter:   2 | Kilika Woods | Ghost Normal\n",
+            ),
+            "Kilika",
+        )
+        .expect("raw CTB fixed rows should parse");
+
+        assert_eq!(parsed.rows.len(), 2);
+        assert!(!parsed.rows[0].random);
+        assert_eq!(parsed.total_counts.get("ragora"), Some(&1));
+        assert!(
+            parsed
+                .section_maxima
+                .get("Kilika")
+                .map(|counts| counts.is_empty())
+                .unwrap_or(true),
+            "fixed raw CTB rows should not feed random-section maxima"
+        );
+    }
+
+    #[test]
+    fn exact_future_encounter_output_parses_multizone_and_simulated_raw_ctb_rows() {
+        let multizone = parse_exact_future_encounter_output(
+            concat!(
+                "Multizone encounter:   1 | Kilika Woods/Besaid Road | Ragora Normal\n",
+                "Multizone encounter:   2 | Kilika Woods/Besaid Road | Ghost Normal\n",
+            ),
+            "Kilika",
+        )
+        .expect("raw multizone rows should parse");
+
+        assert_eq!(multizone.rows.len(), 2);
+        assert!(multizone.rows[0].random);
+        assert_eq!(
+            multizone
+                .section_maxima
+                .get("Kilika")
+                .and_then(|counts| counts.get("ragora")),
+            Some(&1)
+        );
+
+        let simulated = parse_exact_future_encounter_output(
+            concat!(
+                "Simulated Encounter:   1 | Simulation | Ragora Normal\n",
+                "Simulated Encounter:   2 | Simulation | Ghost Normal\n",
+            ),
+            "Simulation",
+        )
+        .expect("raw simulated rows should parse");
+
+        assert_eq!(simulated.rows.len(), 2);
+        assert!(!simulated.rows[0].random);
+        assert_eq!(simulated.total_counts.get("ghost"), Some(&1));
+        assert!(
+            simulated
+                .section_maxima
+                .get("Simulation")
+                .map(|counts| counts.is_empty())
+                .unwrap_or(true),
+            "simulated rows should not feed random-section maxima"
+        );
+    }
+
+    #[test]
+    fn exact_future_encounter_output_aligns_multizone_raw_rows_to_later_zone() {
+        let parsed = parse_exact_future_encounter_output(
+            concat!(
+                "Multizone encounter:   1 | Kilika Woods/Besaid Road | Ragora Normal\n",
+                "Multizone encounter:   2 | Kilika Woods/Besaid Road | Ghost Normal\n",
+            ),
+            "Besaid",
+        )
+        .expect("raw multizone rows should align to either displayed zone");
+
+        assert_eq!(parsed.rows.len(), 2);
+        assert_eq!(parsed.total_counts.get("ghost"), Some(&1));
+        assert_eq!(
+            parsed
+                .section_maxima
+                .get("Besaid")
+                .and_then(|counts| counts.get("ragora")),
+            Some(&1)
+        );
+        assert!(
+            !parsed.section_maxima.contains_key("Kilika"),
+            "matched later-zone rows should be attributed to the requested Drops section"
+        );
+    }
+
+    #[test]
+    fn exact_future_encounter_output_ignores_block_commented_raw_rows_like_python() {
+        let parsed = parse_exact_future_encounter_output(
+            concat!(
+                "/*\n",
+                "Random Encounter:   1   1   1 | Kilika Woods | Ghost Normal\n",
+                "*/\n",
+                "Random Encounter:   2   2   2 | Kilika Woods | Ragora Normal\n",
+                "Random Encounter:   3   3   3 | Kilika Woods | Ghost Normal\n",
+            ),
+            "Kilika",
+        )
+        .expect("raw rows outside block comments should parse");
+
+        assert_eq!(parsed.rows.len(), 2);
+        assert_eq!(parsed.total_counts.get("ragora"), Some(&1));
+        assert_eq!(parsed.total_counts.get("ghost"), Some(&1));
+        assert_eq!(
+            parsed
+                .section_maxima
+                .get("Kilika")
+                .and_then(|counts| counts.get("ghost")),
+            Some(&1),
+            "the commented Ghost row should not be counted"
+        );
+    }
+
+    #[test]
+    fn exact_future_encounter_output_ignores_one_line_block_commented_raw_rows_like_python() {
+        let parsed = parse_exact_future_encounter_output(
+            concat!(
+                "/* Random Encounter:   1   1   1 | Kilika Woods | Ghost Normal */\n",
+                "Random Encounter:   2   2   2 | Kilika Woods | Ragora Normal\n",
+                "Random Encounter:   3   3   3 | Kilika Woods | Ghost Normal\n",
+            ),
+            "Kilika",
+        )
+        .expect("raw rows after one-line block comments should parse");
+
+        assert_eq!(parsed.rows.len(), 2);
+        assert_eq!(parsed.total_counts.get("ragora"), Some(&1));
+        assert_eq!(parsed.total_counts.get("ghost"), Some(&1));
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_unparseable_encounters_output_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "ghost ixion\n",
+                1,
+                None,
+                Some("not an encounters tracker table"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            "No Encounters search: the Encounters tracker output could not be parsed. Refresh the Encounters tracker and try again."
+        );
+        assert_eq!(payload["edited_input"], "kill ghost ixion");
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_unparseable_encounters_input_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "ghost ixion\n",
+                1,
+                Some("not a tracker row"),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again."
+        );
+        assert_eq!(payload["edited_input"], "kill ghost ixion");
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_current_route_preview() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(DEFAULT_SEED, DROPS_NOTES, 380, None, None).unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(output.starts_with("No Encounters search:\n"), "{output}");
+        assert!(
+            output.contains("Cursor line 380, first Ghost line"),
+            "{output}"
+        );
+        assert!(
+            output.contains("No Encounters armor:")
+                || output.contains("none found in the current Ghost route window"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("route synthesis is not implemented yet"),
+            "{output}"
+        );
+        assert!(output.contains("Candidates tested:"), "{output}");
+    }
+
+    #[test]
+    fn no_encounters_first_ghost_window_keeps_immediate_repeat_only() {
+        let input = concat!(
+            "party tyk\n",
+            "ghost ixion\n",
+            "# a note between Ghost and repeat\n",
+            "/repeat 4\n",
+            "ragora tidus\n",
+            "ghost ixion\n",
+        );
+
+        assert_eq!(
+            first_ghost_search_window_input(input, 1).as_deref(),
+            Some("party tyk\nghost ixion\n# a note between Ghost and repeat\n/repeat 4")
+        );
+    }
+
+    #[test]
+    fn no_encounters_first_ghost_window_excludes_later_ghost_routes() {
+        let input = concat!(
+            "ghost ixion\n",
+            "ragora tidus\n",
+            "ghost ixion\n",
+            "/repeat 4\n",
+        );
+
+        assert_eq!(
+            first_ghost_search_window_input(input, 1).as_deref(),
+            Some("ghost ixion")
+        );
+    }
+
+    #[test]
+    fn no_encounters_first_ghost_window_keeps_commented_optional_ghost_first() {
+        let input = concat!(
+            "# ghost ixion\n",
+            "ragora tidus\n",
+            "ghost ixion\n",
+            "/repeat 4\n",
+        );
+
+        assert_eq!(
+            first_ghost_search_window_input(input, 1).as_deref(),
+            Some("# ghost ixion")
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_does_not_accept_later_ghost_drop_for_first_ghost() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                1,
+                "ghost ixion\nragora tidus\nghost ixion\n/repeat 4\n",
+                1,
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            !output.contains("Route status: current Ghost route already produces"),
+            "{output}"
+        );
+        assert!(
+            output.contains("Suggested Ghost kills: 5")
+                || output.contains("No route found that gives a No Encounters armor"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_future_rows_when_encounters_output_is_available() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "ghost ixion\n",
+                1,
+                None,
+                Some("# Cavern of the Stolen Fayth:\n1 | Ghost Normal\n"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Future encounters parsed: 1 row(s) through Ghost."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Search mode: exact-encounters-output, prefer-guaranteed."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Future random sections: Cavern of the Stolen Fayth: ghostx1."),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_guaranteed_only_for_fixed_exact_ghost_row() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                1,
+                "ghost ixion\n/repeat 4\n",
+                1,
+                None,
+                Some("Encounter:   1 | Cave | Ghost Normal\n"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Guaranteed-only route(s) found before optional random routes."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Search mode: exact-encounters-output."),
+            "{output}"
+        );
+        assert!(!output.contains("prefer-guaranteed"), "{output}");
+    }
+
+    #[test]
+    fn no_encounters_routes_reports_random_rows_for_random_exact_ghost_row() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                1,
+                "ghost ixion\n/repeat 4\n",
+                1,
+                None,
+                Some("Random Encounter:   1   1   1 | Cave | Ghost Normal\n"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains(
+                "No guaranteed-only route found; best result uses 1 random encounter row."
+            ),
+            "{output}"
+        );
+        assert!(
+            output.contains("Search mode: exact-encounters-output, prefer-guaranteed."),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_aligns_future_output_to_drops_section_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "# -- Cavern of the Stolen Fayth --\nghost ixion\n",
+                1,
+                None,
+                Some("# Kilika:\n1 | Ragora Normal\n# Cave:\n1 | Ghost Normal\n"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Future encounters parsed: 1 row(s) through Ghost."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Future random sections: Cavern of the Stolen Fayth: ghostx1."),
+            "{output}"
+        );
+        assert!(!output.contains("ragorax1"), "{output}");
+    }
+
+    #[test]
+    fn no_encounters_routes_anchors_future_output_to_first_search_route_section_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "# -- Kilika --\npiranha tidus\n# -- Cavern of the Stolen Fayth --\nghost ixion\n",
+                1,
+                None,
+                Some("# Kilika:\n1 | Ragora Normal\n# Cave:\n1 | Ghost Normal\n"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Future encounters parsed: 2 row(s) through Ghost."),
+            "{output}"
+        );
+        assert!(
+            output.contains(
+                "Future random sections: Cavern of the Stolen Fayth: ghostx1 | Kilika: ragorax1."
+            ),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_uses_encounters_input_when_output_is_missing() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "ghost ixion\n",
+                1,
+                Some("/nopadding\nencounter cave_white_zone\n"),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(output.contains("Future encounters parsed:"), "{output}");
+        assert!(
+            output.contains("Search mode: exact-encounters-input."),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_accepts_single_line_block_comment_in_encounters_input_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "ghost ixion\n",
+                1,
+                Some("/* exact rows */\n/nopadding\nencounter cave_white_zone\n"),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Search mode: exact-encounters-input."),
+            "{output}"
+        );
+        assert!(output.contains("Future encounters parsed:"), "{output}");
+    }
+
+    #[test]
+    fn no_encounters_routes_rejects_encounters_input_for_wrong_section_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "# -- Kilika --\nghost ixion\n",
+                1,
+                Some("/nopadding\nencounter cave_white_zone\n"),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["output"],
+            "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again."
+        );
+        assert_eq!(payload["edited_input"], "# -- Kilika --\nkill ghost ixion");
+    }
+
+    #[test]
+    fn no_encounters_routes_falls_back_to_input_when_output_is_stale() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "ghost ixion\n",
+                1,
+                Some("/nopadding\nencounter cave_white_zone\n"),
+                Some("not an encounters tracker table"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(output.contains("Future encounters parsed:"), "{output}");
+        assert!(
+            output.contains("Search mode: exact-encounters-input."),
+            "{output}"
+        );
+        assert!(
+            !output.contains("could not be parsed"),
+            "valid input should recover from stale output: {output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_accepts_raw_ctb_encounters_output() {
+        let raw_output = concat!(
+            "Random Encounter:   1   1   1 | Kilika Woods | Ragora, Killer Bee Normal\n",
+            "Random Encounter:   2   2   2 | Kilika Woods | Ghost Normal\n",
+            "Random Encounter:   3   3   3 | Kilika Woods | Piranha Normal\n",
+        );
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "# -- Kilika --\nghost ixion\n",
+                2,
+                None,
+                Some(raw_output),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Search mode: exact-encounters-output, prefer-guaranteed."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Future encounters parsed: 2 row(s) through Ghost."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Future random sections: Kilika: ghostx1, killer_beex1, ragorax1."),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_accepts_raw_ctb_rows_as_encounters_input() {
+        let raw_input = concat!(
+            "Random Encounter:   1   1   1 | Kilika Woods | Ragora, Killer Bee Normal\n",
+            "Random Encounter:   2   2   2 | Kilika Woods | Ghost Normal\n",
+            "Random Encounter:   3   3   3 | Kilika Woods | Piranha Normal\n",
+        );
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "# -- Kilika --\nghost ixion\n",
+                2,
+                Some(raw_input),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Search mode: exact-encounters-input."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Future encounters parsed: 2 row(s) through Ghost."),
+            "{output}"
+        );
+        assert!(
+            !output.contains("could not be parsed"),
+            "raw rows should parse directly as fallback input: {output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_routes_aligns_multizone_raw_rows_to_later_zone() {
+        let raw_output = concat!(
+            "Multizone encounter:   1 | Kilika Woods/Besaid Road | Ragora Normal\n",
+            "Multizone encounter:   2 | Kilika Woods/Besaid Road | Ghost Normal\n",
+        );
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "# -- Besaid --\nghost ixion\n",
+                2,
+                None,
+                Some(raw_output),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Search mode: exact-encounters-output, prefer-guaranteed."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Future random sections: Besaid: ghostx1, ragorax1."),
+            "{output}"
+        );
+        assert!(!output.contains("Kilika: ragorax1"), "{output}");
+    }
+
+    #[test]
+    fn no_encounters_routes_aligns_multizone_raw_fallback_input_to_later_zone() {
+        let raw_input = concat!(
+            "Multizone encounter:   1 | Kilika Woods/Besaid Road | Ragora Normal\n",
+            "Multizone encounter:   2 | Kilika Woods/Besaid Road | Ghost Normal\n",
+        );
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "# -- Besaid --\nghost ixion\n",
+                2,
+                Some(raw_input),
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Search mode: exact-encounters-input."),
+            "{output}"
+        );
+        assert!(
+            output.contains("Future random sections: Besaid: ghostx1, ragorax1."),
+            "{output}"
+        );
+        assert!(
+            !output.contains("could not be parsed"),
+            "raw multizone input should parse directly: {output}"
+        );
+    }
+
+    #[test]
+    fn no_encounters_ghost_repeat_synthesis_reports_none_without_simple_candidate() {
+        let input = DROPS_NOTES.replace("/repeat 30", "/repeat 1");
+        let search = synthesize_no_encounters_ghost_route(DEFAULT_SEED, &input, 380, 3, 0);
+
+        assert_eq!(search.candidate, None);
+        assert_eq!(search.candidates_tested, 3);
+    }
+
+    #[test]
+    fn no_encounters_routes_applies_synthesized_ghost_repeat_candidate() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(1, "ghost ixion\n/repeat 1\n", 1, None, None).unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("No Encounters armor: Equipment #1"),
+            "{output}"
+        );
+        assert!(output.contains("Suggested Ghost kills: 5"), "{output}");
+        assert!(
+            output.contains("Suggested repeat line: /repeat 4"),
+            "{output}"
+        );
+        assert!(output.contains("Candidates tested: 5"), "{output}");
+        assert_eq!(payload["edited_input"], "kill ghost ixion\n/repeat 4");
+    }
+
+    #[test]
+    fn no_encounters_synthesis_ignores_repeat_inside_block_comment() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(1, "ghost ixion\n/*\n/repeat 1\n*/\n", 1, None, None)
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload["edited_input"],
+            "kill ghost ixion\n/repeat 4\n/*\n/repeat 1\n*/"
+        );
+    }
+
+    #[test]
+    fn no_encounters_repeat_scan_keeps_repeat_after_single_line_block_comment_like_python() {
+        let lines = ["kill ghost ixion", "/* old note */", "/repeat 1"]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+
+        assert_eq!(find_active_repeat_after_ghost(&lines, 0), Some(2));
+    }
+
+    #[test]
+    fn no_encounters_ghost_scan_allows_single_line_block_comment_like_python() {
+        let lines = ["/* route note */", "# -- Kilika --", "kill ghost ixion"]
+            .into_iter()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+
+        assert_eq!(find_first_ghost_route_line(&lines, 1), Some(2));
+        assert_eq!(
+            drops_search_first_ghost_line(
+                &["/* route note */", "# -- Kilika --", "kill ghost ixion"],
+                1,
+            ),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn no_encounters_start_section_allows_single_line_block_comment_like_python() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(
+                DEFAULT_SEED,
+                "/* route note */\n# -- Kilika --\nkill ghost ixion\n",
+                1,
+                None,
+                Some("# Besaid:\n1 | Piranha Normal\n# Kilika:\n1 | Ghost Normal\n"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("Future random sections: Kilika: ghostx1."),
+            "{output}"
+        );
+        assert!(!output.contains("piranha"), "{output}");
+    }
+
+    #[test]
+    fn no_encounters_routes_applies_pre_ghost_death_candidate() {
+        let payload: Value = serde_json::from_str(
+            &no_encounters_routes_json(140, "ghost ixion\n/repeat 1\n", 1, None, None).unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+
+        assert!(
+            output.contains("No Encounters armor: Equipment #9"),
+            "{output}"
+        );
+        assert!(output.contains("Suggested Ghost kills: 50"), "{output}");
+        assert!(output.contains("Suggested pre-Ghost deaths: 2"), "{output}");
+        assert!(
+            output.contains("Suggested repeat line: /repeat 49"),
+            "{output}"
+        );
+        assert!(output.contains("Candidates tested: 150"), "{output}");
+        assert_eq!(
+            payload["edited_input"],
+            "death ???\ndeath ???\nkill ghost ixion\n/repeat 49"
+        );
     }
 
     #[test]

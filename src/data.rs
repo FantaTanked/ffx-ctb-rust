@@ -396,6 +396,8 @@ struct JsonEquipmentDefaults {
 
 #[derive(Debug, Deserialize)]
 struct JsonMonsterAction {
+    actions_file: i32,
+    action_id: usize,
     name: String,
     target: String,
 }
@@ -463,7 +465,10 @@ pub fn random_formation(name: &str, formation_roll: u32) -> Option<EncounterForm
     })
 }
 
-fn format_monster_list(monsters: &[String]) -> String {
+pub fn format_monster_list(monsters: &[String]) -> String {
+    if monsters.is_empty() {
+        return "Empty".to_string();
+    }
     monsters
         .iter()
         .map(|monster| {
@@ -589,7 +594,10 @@ pub fn monster_action_data(monster_key: &str, name: &str) -> Option<ActionData> 
         .get(&monster.index)
         .and_then(|actions| actions.get(name))
     {
-        let mut action = action_data(&override_data.action_key)?;
+        let mut action =
+            parse_action_from_file_index(override_data.actions_file, override_data.action_id)
+                .or_else(|| action_data(&override_data.action_key))?;
+        action.key = override_data.action_key.clone();
         action.target = override_data.target;
         return Some(action);
     }
@@ -1169,6 +1177,8 @@ fn parse_action_target(
 #[derive(Debug, Clone)]
 struct MonsterActionOverride {
     action_key: String,
+    actions_file: i32,
+    action_id: usize,
     target: ActionTarget,
 }
 
@@ -1182,18 +1192,27 @@ fn parse_monster_action_targets() -> HashMap<usize, HashMap<String, MonsterActio
             let index = monster_id.strip_prefix('m')?.parse::<usize>().ok()?;
             let mut action_targets = HashMap::new();
             for action in actions {
+                if action.target.is_empty() {
+                    continue;
+                }
                 let Some(target) = parse_named_action_target(&action.target) else {
                     continue;
                 };
                 let action_key = stringify(&action.name);
-                let alias = if action_targets.contains_key(&action_key) {
-                    format!("{}_{}", action_key, stringify(&action.target))
+                let base_alias = action_key.replace('-', "_");
+                let alias = if action_targets.contains_key(&base_alias) {
+                    format!("{}_{}", base_alias, stringify(&action.target))
                 } else {
-                    action_key.clone()
+                    base_alias
                 };
                 action_targets
                     .entry(alias)
-                    .or_insert(MonsterActionOverride { action_key, target });
+                    .or_insert(MonsterActionOverride {
+                        action_key,
+                        actions_file: action.actions_file,
+                        action_id: action.action_id,
+                        target,
+                    });
             }
             Some((index, action_targets))
         })
@@ -1241,6 +1260,7 @@ fn parse_default_monster_actions() -> HashMap<String, String> {
 
 fn parse_named_action_target(value: &str) -> Option<ActionTarget> {
     match value {
+        "" => Some(ActionTarget::None),
         "Self" => Some(ActionTarget::SelfTarget),
         "Counter Self" => Some(ActionTarget::CounterSelf),
         "Characters' Party" => Some(ActionTarget::CharactersParty),

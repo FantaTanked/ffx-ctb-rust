@@ -308,7 +308,8 @@ pre {
 
 .encounter-controls,
 .tracker-actions,
-.chocobo {
+.chocobo,
+.tanker {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -345,12 +346,17 @@ pre {
   padding: 8px 10px;
 }
 
-.chocobo:empty {
+.chocobo:empty,
+.tanker:empty {
   display: none;
 }
 
 .summary {
   margin: 0 0 8px;
+}
+
+.tanker input {
+  width: 132px;
 }
 
 .swap-controls {

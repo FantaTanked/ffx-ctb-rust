@@ -77,6 +77,58 @@ pub fn chocobo_swap_json(
 
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
+pub fn tanker_pattern_json(
+    input: &str,
+    cursor_line: usize,
+    pattern: &str,
+) -> Result<String, JsValue> {
+    api::tanker_pattern_json(input, cursor_line, pattern)
+        .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn tros_attack_json(input: &str, cursor_line: usize, attack: &str) -> Result<String, JsValue> {
+    api::tros_attack_json(input, cursor_line, attack)
+        .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn garuda1_attacks_json(
+    input: &str,
+    cursor_line: usize,
+    attacks: &str,
+) -> Result<String, JsValue> {
+    api::garuda1_attacks_json(input, cursor_line, attacks)
+        .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn garuda2_attack_json(
+    seed: u32,
+    input: &str,
+    cursor_line: usize,
+    attack: &str,
+) -> Result<String, JsValue> {
+    api::garuda2_attack_json(seed, input, cursor_line, attack)
+        .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn lancet_tutorial_timing_json(
+    input: &str,
+    cursor_line: usize,
+    timing: &str,
+) -> Result<String, JsValue> {
+    api::lancet_tutorial_timing_json(input, cursor_line, timing)
+        .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
 pub fn tracker_default_json(tracker: &str, seed: u32) -> Result<String, JsValue> {
     api::tracker_default_json(tracker, seed).map_err(|error| JsValue::from_str(&error.to_string()))
 }
@@ -86,6 +138,25 @@ pub fn tracker_default_json(tracker: &str, seed: u32) -> Result<String, JsValue>
 pub fn tracker_render_json(tracker: &str, seed: u32, input: &str) -> Result<String, JsValue> {
     api::tracker_render_json(tracker, seed, input)
         .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub fn no_encounters_routes_json(
+    seed: u32,
+    input: &str,
+    start_line: usize,
+    encounters_input: Option<String>,
+    encounters_output: Option<String>,
+) -> Result<String, JsValue> {
+    api::no_encounters_routes_json(
+        seed,
+        input,
+        start_line,
+        encounters_input.as_deref(),
+        encounters_output.as_deref(),
+    )
+    .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 #[cfg(feature = "wasm")]

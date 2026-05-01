@@ -13,6 +13,7 @@ const fileInput = document.querySelector("#fileInput");
 const summary = document.querySelector("#summary");
 const party = document.querySelector("#party");
 const chocobo = document.querySelector("#chocobo");
+const tanker = document.querySelector("#tanker");
 const prevEncounterButton = document.querySelector("#prevEncounter");
 const nextEncounterButton = document.querySelector("#nextEncounter");
 const encounterSelect = document.querySelector("#encounterSelect");
@@ -24,6 +25,7 @@ const trackerPanes = {
     summary: document.querySelector("#dropsSummary"),
     load: document.querySelector("#loadDrops"),
     render: document.querySelector("#renderDrops"),
+    noEncounters: document.querySelector("#searchNoEncounters"),
   },
   encounters: {
     input: document.querySelector("#encountersTrackerInput"),
@@ -36,9 +38,10 @@ const trackerPanes = {
   },
 };
 
-const APP_BUILD_ID = "ctb-tracker-render-20260426-201";
+const APP_BUILD_ID = "ctb-tracker-render-20260430-224";
 let lastRendered = null;
 let lastRenderedInput = null;
+let tankerPatternValue = "awsdn-";
 
 let wasm = null;
 
@@ -94,6 +97,7 @@ Object.entries(trackerPanes).forEach(([tracker, pane]) => {
   pane.load.addEventListener("click", () => loadTrackerDefault(tracker));
   pane.render.addEventListener("click", () => renderTracker(tracker));
 });
+trackerPanes.drops.noEncounters?.addEventListener("click", searchNoEncountersRoutes);
 modeTabs.forEach((tab) => {
   tab.addEventListener("click", () => setMode(tab.dataset.mode || "ctb"));
 });
@@ -121,6 +125,7 @@ async function renderCurrentInput() {
     summary.textContent = `${rendered.prepared_line_count} prepared lines | from line ${rendered.changed_line || 1} | ${rendered.encounters.length} encounters | ${rendered.unsupported_count} unsupported | ${durationSeconds.toFixed(3)}s`;
     const partyPayload = renderParty(module, seed);
     renderChocoboTools(module, seed, rendered, partyPayload);
+    renderTankerTools(module, rendered);
     updateEncounterControls(rendered.encounters || []);
     status.textContent = rendered.message;
   } catch (error) {
@@ -155,11 +160,43 @@ async function renderTracker(tracker) {
     const started = performance.now();
     const payload = JSON.parse(module.tracker_render_json(tracker, seed, pane.input.value));
     const durationSeconds = payload.duration_seconds || (performance.now() - started) / 1000;
+    pane.lastRenderedInput = pane.input.value;
     pane.output.textContent = payload.output || "";
     pane.summary.textContent = `${payload.output_filename} | rendered | ${durationSeconds.toFixed(3)}s`;
   } catch (error) {
     pane.summary.textContent = error?.message || String(error);
   }
+}
+
+async function searchNoEncountersRoutes() {
+  const pane = trackerPanes.drops;
+  try {
+    const module = await loadWasm();
+    const seed = Number.parseInt(seedInput.value, 10) >>> 0;
+    const startLine = textareaCursorLine(pane.input);
+    const encountersPane = trackerPanes.encounters;
+    const encountersOutput = encountersPane.lastRenderedInput === encountersPane.input.value
+      ? encountersPane.output.textContent || null
+      : null;
+    const payload = JSON.parse(module.no_encounters_routes_json(
+      seed,
+      pane.input.value,
+      startLine,
+      encountersPane.input.value || null,
+      encountersOutput,
+    ));
+    if (typeof payload.edited_input === "string" && payload.edited_input !== pane.input.value) {
+      pane.input.value = payload.edited_input;
+    }
+    pane.output.textContent = payload.output || "";
+    pane.summary.textContent = `No Encounters search | line ${startLine}`;
+  } catch (error) {
+    pane.summary.textContent = error?.message || String(error);
+  }
+}
+
+function textareaCursorLine(textarea) {
+  return textarea.value.slice(0, textarea.selectionStart || 0).split("\n").length;
 }
 
 function renderEncounterSliderControls(pane) {
@@ -232,8 +269,11 @@ async function updatePartyAtCursor() {
   const seed = Number.parseInt(seedInput.value, 10) >>> 0;
   const partyPayload = renderParty(wasm, seed);
   if (lastRendered) {
-    renderChocoboTools(wasm, seed, lastRendered, partyPayload);
-    updateEncounterControls(lastRendered.encounters || []);
+    const encounters = encounterList();
+    const currentRendered = { ...lastRendered, encounters };
+    renderChocoboTools(wasm, seed, currentRendered, partyPayload);
+    renderTankerTools(wasm, currentRendered);
+    updateEncounterControls(encounters);
   }
 }
 
@@ -268,6 +308,77 @@ function renderChocoboTools(module, seed, rendered, partyPayload) {
   buttons.push(chocoboButton("Thwack", () => applyChocoboAction(module, seed, "thwack", null)));
   const swapControls = buildChocoboSwapControls(module, seed, partyPayload);
   chocobo.replaceChildren(...buttons, swapControls);
+}
+
+function renderTankerTools(module, rendered) {
+  const cursorLine = input.value.slice(0, input.selectionStart).split("\n").length;
+  const encounter = currentEncounterAtLine(rendered.encounters || [], cursorLine);
+  if (!encounter || !["tanker", "tros", "garuda_1", "garuda_2", "lancet_tutorial"].includes(encounter.name)) {
+    tanker.replaceChildren();
+    return;
+  }
+
+  if (encounter.name === "garuda_2") {
+    const label = document.createElement("span");
+    label.textContent = "Garuda 2 Attack";
+    const attackButton = chocoboButton("Attack", () => applyGaruda2Attack(module, "attack"));
+    const sonicButton = chocoboButton("Sonic Boom", () => applyGaruda2Attack(module, "sonic_boom"));
+    const nothingButton = chocoboButton("Does Nothing", () => applyGaruda2Attack(module, "does_nothing"));
+    tanker.replaceChildren(label, attackButton, sonicButton, nothingButton);
+    return;
+  }
+
+  if (encounter.name === "lancet_tutorial") {
+    const label = document.createElement("span");
+    label.textContent = "Lancet Tutorial";
+    const beforeButton = chocoboButton("Before Lancet", () => applyLancetTutorialTiming(module, "before"));
+    const afterButton = chocoboButton("After Lancet", () => applyLancetTutorialTiming(module, "after"));
+    tanker.replaceChildren(label, beforeButton, afterButton);
+    return;
+  }
+
+  if (encounter.name === "garuda_1") {
+    const label = document.createElement("span");
+    label.textContent = "Garuda 1 Attacks";
+    const selects = Array.from({ length: 5 }, (_, index) => {
+      const select = document.createElement("select");
+      select.setAttribute("aria-label", `Garuda 1 attack ${index + 1}`);
+      [["attack", "Attack"], ["sonic_boom", "Sonic Boom"]].forEach(([value, text]) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = text;
+        select.append(option);
+      });
+      return select;
+    });
+    const button = chocoboButton("Overwrite", () => applyGaruda1Attacks(module, selects.map((select) => select.value)));
+    tanker.replaceChildren(label, ...selects, button);
+    return;
+  }
+
+  if (encounter.name === "tros") {
+    const label = document.createElement("span");
+    label.textContent = "Tros First Attack";
+    const attackButton = chocoboButton("Attack", () => applyTrosAttack(module, "attack"));
+    const tentaclesButton = chocoboButton("Tentacles", () => applyTrosAttack(module, "tentacles"));
+    tanker.replaceChildren(label, attackButton, tentaclesButton);
+    return;
+  }
+
+  const label = document.createElement("span");
+  label.textContent = "Tanker Pattern";
+  const patternInput = document.createElement("input");
+  patternInput.type = "text";
+  patternInput.value = tankerPatternValue;
+  patternInput.placeholder = "awsdn-";
+  patternInput.addEventListener("input", () => {
+    tankerPatternValue = patternInput.value;
+  });
+  patternInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") applyTankerPattern(module, patternInput.value);
+  });
+  const button = chocoboButton("Overwrite", () => applyTankerPattern(module, patternInput.value));
+  tanker.replaceChildren(label, patternInput, button);
 }
 
 function chocoboButton(label, onClick) {
@@ -308,13 +419,16 @@ function buildChocoboSwapControls(module, seed, partyPayload) {
 
 function currentEncounterAtLine(encounterList, cursorLine) {
   for (let index = encounterList.length - 1; index >= 0; index -= 1) {
-    if (cursorLine >= encounterList[index].start_line) return encounterList[index];
+    const encounter = encounterList[index];
+    if (cursorLine >= encounter.start_line && cursorLine <= encounter.end_line) return encounter;
   }
-  return encounterList[0] || null;
+  return null;
 }
 
 function encounterList() {
-  return lastRendered?.encounters?.length ? lastRendered.encounters : scanEncounters(input.value);
+  return lastRenderedInput === input.value && lastRendered?.encounters?.length
+    ? lastRendered.encounters
+    : scanEncounters(input.value);
 }
 
 function scanEncounters(text) {
@@ -323,8 +437,17 @@ function scanEncounters(text) {
   let currentName = null;
   let currentStart = null;
   let index = 0;
+  let inBlockComment = false;
   lines.forEach((line, zeroIndex) => {
     const stripped = line.trim();
+    if (stripped.startsWith("/*")) {
+      if (!stripped.endsWith("*/")) inBlockComment = true;
+      return;
+    }
+    if (inBlockComment) {
+      if (stripped.endsWith("*/")) inBlockComment = false;
+      return;
+    }
     if (!stripped.toLowerCase().startsWith("encounter ")) return;
     const words = stripped.split(/\s+/);
     const lineNumber = zeroIndex + 1;
@@ -411,6 +534,65 @@ async function applyChocoboSwap(module, seed, slotIndex, replacement) {
   }
 }
 
+async function applyTankerPattern(module, pattern) {
+  try {
+    tankerPatternValue = pattern;
+    const cursorLine = input.value.slice(0, input.selectionStart).split("\n").length;
+    const payload = JSON.parse(module.tanker_pattern_json(input.value, cursorLine, pattern));
+    replaceLineRange(payload.start_line, payload.end_line, payload.lines.join("\n"));
+    await renderCurrentInput();
+  } catch (error) {
+    status.textContent = error?.message || String(error);
+  }
+}
+
+async function applyTrosAttack(module, attack) {
+  try {
+    const cursorLine = input.value.slice(0, input.selectionStart).split("\n").length;
+    const payload = JSON.parse(module.tros_attack_json(input.value, cursorLine, attack));
+    replaceLineRange(payload.start_line, payload.end_line, payload.lines.join("\n"));
+    await renderCurrentInput();
+  } catch (error) {
+    status.textContent = error?.message || String(error);
+  }
+}
+
+async function applyGaruda1Attacks(module, attacks) {
+  try {
+    const cursorLine = input.value.slice(0, input.selectionStart).split("\n").length;
+    const payload = JSON.parse(module.garuda1_attacks_json(input.value, cursorLine, attacks.join(",")));
+    replaceLineRange(payload.start_line, payload.end_line, payload.lines.join("\n"));
+    await renderCurrentInput();
+  } catch (error) {
+    status.textContent = error?.message || String(error);
+  }
+}
+
+async function applyGaruda2Attack(module, attack) {
+  try {
+    const cursorLine = input.value.slice(0, input.selectionStart).split("\n").length;
+    const seed = Number.parseInt(seedInput.value, 10) >>> 0;
+    const payload = JSON.parse(module.garuda2_attack_json(seed, input.value, cursorLine, attack));
+    if (payload.lines.length || payload.end_line >= payload.start_line) {
+      replaceLineRange(payload.start_line, payload.end_line, payload.lines.join("\n"));
+      await renderCurrentInput();
+    }
+  } catch (error) {
+    status.textContent = error?.message || String(error);
+  }
+}
+
+async function applyLancetTutorialTiming(module, timing) {
+  try {
+    const cursorLine = input.value.slice(0, input.selectionStart).split("\n").length;
+    const payload = JSON.parse(module.lancet_tutorial_timing_json(input.value, cursorLine, timing));
+    replaceLineRange(payload.start_line, payload.end_line, payload.lines.join("\n"));
+    await renderCurrentInput();
+  } catch (error) {
+    status.textContent = error?.message || String(error);
+  }
+}
+
 function insertAtLine(lineNumber, text) {
   const lines = input.value.split("\n");
   const insertion = text.endsWith("\n") ? text : `${text}\n`;
@@ -419,6 +601,17 @@ function insertAtLine(lineNumber, text) {
   input.value = `${input.value.slice(0, adjustedOffset)}${insertion}${input.value.slice(adjustedOffset)}`;
   input.focus();
   input.selectionStart = input.selectionEnd = adjustedOffset + insertion.length;
+}
+
+function replaceLineRange(startLine, endLine, text) {
+  const insertion = !text || text.endsWith("\n") ? text : `${text}\n`;
+  const startOffset = lineStartOffset(input.value, startLine);
+  const endOffset = endLine >= startLine
+    ? lineStartOffset(input.value, endLine + 1)
+    : startOffset;
+  input.value = `${input.value.slice(0, startOffset)}${insertion}${input.value.slice(endOffset)}`;
+  input.focus();
+  input.selectionStart = input.selectionEnd = startOffset + insertion.length;
 }
 
 function downloadText(filename, text) {
