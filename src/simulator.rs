@@ -5,9 +5,11 @@ use crate::model::{
     AutoAbility, Buff, Character, Element, ElementalAffinity, EncounterCondition, MonsterSlot,
     Status,
 };
-use crate::parser::{parse_raw_action_line, MonsterActionActor, ParsedCommand};
+use crate::parser::{
+    parse_edited_action_line, parse_raw_action_line, MonsterActionActor, ParsedCommand,
+};
 use crate::rng::FfxRngTracker;
-use crate::script::prepare_action_lines;
+use crate::script::{edit_action_line, prepare_action_lines_before_raw_line};
 use std::collections::{HashMap, HashSet};
 
 const CHARACTER_VALUES: &str = "tidus, yuna, auron, kimahri, wakka, lulu, rikku, seymour, valefor, ifrit, ixion, shiva, bahamut, anima, yojimbo, cindy, sandy, mindy, unknown";
@@ -17,6 +19,500 @@ const YOJIMBO_COMPATIBILITY_MODIFIER: i32 = 10;
 const YOJIMBO_OVERDRIVE_MOTIVATION: i32 = 20;
 const YOJIMBO_GIL_MOTIVATION_MODIFIER: i64 = 4;
 const MAX_BRIBE_GIL_SPENT: i32 = 999_999_999;
+const AEON_BONUS_CHARACTERS: [Character; 8] = [
+    Character::Seymour,
+    Character::Valefor,
+    Character::Ifrit,
+    Character::Ixion,
+    Character::Shiva,
+    Character::Bahamut,
+    Character::Anima,
+    Character::Yojimbo,
+];
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AeonStatBlock {
+    hp: i32,
+    mp: i32,
+    strength: i32,
+    defense: i32,
+    magic: i32,
+    magic_defense: i32,
+    agility: i32,
+    luck: i32,
+    evasion: i32,
+    accuracy: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActorStat {
+    Hp,
+    Mp,
+    Agility,
+    Strength,
+    Defense,
+    Magic,
+    MagicDefense,
+    Luck,
+    Evasion,
+    Accuracy,
+}
+
+impl ActorStat {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "hp" => Some(Self::Hp),
+            "mp" => Some(Self::Mp),
+            "agility" => Some(Self::Agility),
+            "strength" => Some(Self::Strength),
+            "defense" => Some(Self::Defense),
+            "magic" => Some(Self::Magic),
+            "magic_defense" | "magic_def" => Some(Self::MagicDefense),
+            "luck" => Some(Self::Luck),
+            "evasion" => Some(Self::Evasion),
+            "accuracy" => Some(Self::Accuracy),
+            _ => None,
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Hp => "HP",
+            Self::Mp => "MP",
+            Self::Agility => "Agility",
+            Self::Strength => "Strength",
+            Self::Defense => "Defense",
+            Self::Magic => "Magic",
+            Self::MagicDefense => "Magic defense",
+            Self::Luck => "Luck",
+            Self::Evasion => "Evasion",
+            Self::Accuracy => "Accuracy",
+        }
+    }
+
+    fn value(self, actor: &BattleActor) -> i32 {
+        match self {
+            Self::Hp => actor.max_hp,
+            Self::Mp => actor.max_mp,
+            Self::Agility => actor.agility as i32,
+            Self::Strength => actor.combat_stats.strength,
+            Self::Defense => actor.combat_stats.defense,
+            Self::Magic => actor.combat_stats.magic,
+            Self::MagicDefense => actor.combat_stats.magic_defense,
+            Self::Luck => actor.combat_stats.luck,
+            Self::Evasion => actor.combat_stats.evasion,
+            Self::Accuracy => actor.combat_stats.accuracy,
+        }
+    }
+
+    fn bonus_value(self, stats: AeonStatBlock) -> i32 {
+        match self {
+            Self::Hp => stats.hp,
+            Self::Mp => stats.mp,
+            Self::Agility => stats.agility,
+            Self::Strength => stats.strength,
+            Self::Defense => stats.defense,
+            Self::Magic => stats.magic,
+            Self::MagicDefense => stats.magic_defense,
+            Self::Luck => stats.luck,
+            Self::Evasion => stats.evasion,
+            Self::Accuracy => stats.accuracy,
+        }
+    }
+
+    fn set_bonus(self, stats: &mut AeonStatBlock, value: i32) {
+        match self {
+            Self::Hp => stats.hp = value,
+            Self::Mp => stats.mp = value,
+            Self::Agility => stats.agility = value,
+            Self::Strength => stats.strength = value,
+            Self::Defense => stats.defense = value,
+            Self::Magic => stats.magic = value,
+            Self::MagicDefense => stats.magic_defense = value,
+            Self::Luck => stats.luck = value,
+            Self::Evasion => stats.evasion = value,
+            Self::Accuracy => stats.accuracy = value,
+        }
+    }
+
+    fn set_value(self, actor: &mut BattleActor, value: i32) {
+        match self {
+            Self::Hp => {
+                actor.max_hp = if matches!(actor.id, ActorId::Monster(_)) {
+                    value.max(0)
+                } else {
+                    value.clamp(0, 99_999)
+                };
+                actor.current_hp = actor.current_hp.min(actor.effective_max_hp());
+                if actor.current_hp <= 0 {
+                    actor.buffs.clear();
+                    actor.clear_statuses();
+                    actor.set_status(Status::Death, 254);
+                }
+            }
+            Self::Mp => {
+                actor.max_mp = if matches!(actor.id, ActorId::Monster(_)) {
+                    value.max(0)
+                } else {
+                    value.clamp(0, 9_999)
+                };
+                actor.current_mp = actor.current_mp.min(actor.effective_max_mp());
+            }
+            Self::Agility => actor.agility = value.clamp(0, 255) as u8,
+            Self::Strength => actor.combat_stats.strength = value.clamp(0, 255),
+            Self::Defense => actor.combat_stats.defense = value.clamp(0, 255),
+            Self::Magic => actor.combat_stats.magic = value.clamp(0, 255),
+            Self::MagicDefense => actor.combat_stats.magic_defense = value.clamp(0, 255),
+            Self::Luck => actor.combat_stats.luck = value.clamp(0, 255),
+            Self::Evasion => actor.combat_stats.evasion = value.clamp(0, 255),
+            Self::Accuracy => actor.combat_stats.accuracy = value.clamp(0, 255),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AeonStatFormula {
+    character: Character,
+    hp: (i32, i32, i32),
+    mp: (i32, i32, i32),
+    strength: (i32, i32, i32),
+    defense: (i32, i32, i32),
+    magic: (i32, i32, i32),
+    magic_defense: (i32, i32, i32),
+    agility: (i32, i32, i32),
+    evasion: (i32, i32, i32),
+    accuracy: (i32, i32, i32),
+}
+
+const AEON_STAT_FORMULAS: [AeonStatFormula; 7] = [
+    AeonStatFormula {
+        character: Character::Valefor,
+        hp: (20, 6, 1),
+        mp: (4, 1, 5),
+        strength: (60, 1, 7),
+        defense: (50, 1, 5),
+        magic: (100, 1, 70),
+        magic_defense: (100, 1, 30),
+        agility: (50, 1, 20),
+        evasion: (50, 1, 24),
+        accuracy: (200, 1, 20),
+    },
+    AeonStatFormula {
+        character: Character::Ifrit,
+        hp: (70, 5, 1),
+        mp: (3, 1, 5),
+        strength: (80, 1, 7),
+        defense: (170, 1, 5),
+        magic: (90, 1, 33),
+        magic_defense: (90, 1, 34),
+        agility: (40, 1, 20),
+        evasion: (30, 1, 70),
+        accuracy: (200, 1, 20),
+    },
+    AeonStatFormula {
+        character: Character::Ixion,
+        hp: (55, 6, 1),
+        mp: (5, 1, 5),
+        strength: (100, 1, 7),
+        defense: (100, 1, 5),
+        magic: (90, 1, 38),
+        magic_defense: (130, 1, 30),
+        agility: (30, 1, 20),
+        evasion: (30, 1, 47),
+        accuracy: (250, 1, 20),
+    },
+    AeonStatFormula {
+        character: Character::Shiva,
+        hp: (40, 6, 1),
+        mp: (7, 1, 5),
+        strength: (120, 1, 8),
+        defense: (40, 1, 7),
+        magic: (100, 1, 28),
+        magic_defense: (100, 1, 25),
+        agility: (100, 1, 23),
+        evasion: (100, 1, 44),
+        accuracy: (200, 1, 20),
+    },
+    AeonStatFormula {
+        character: Character::Bahamut,
+        hp: (100, 7, 1),
+        mp: (5, 3, 10),
+        strength: (160, 1, 7),
+        defense: (200, 1, 6),
+        magic: (90, 1, 250),
+        magic_defense: (100, 1, 12),
+        agility: (50, 1, 20),
+        evasion: (50, 1, 20),
+        accuracy: (200, 1, 20),
+    },
+    AeonStatFormula {
+        character: Character::Anima,
+        hp: (120, 8, 1),
+        mp: (4, 2, 5),
+        strength: (330, 1, 6),
+        defense: (100, 1, 5),
+        magic: (70, 1, 12),
+        magic_defense: (100, 1, 30),
+        agility: (40, 1, 20),
+        evasion: (50, 1, 20),
+        accuracy: (200, 1, 20),
+    },
+    AeonStatFormula {
+        character: Character::Yojimbo,
+        hp: (18, 9, 1),
+        mp: (0, 0, 10),
+        strength: (240, 1, 6),
+        defense: (250, 1, 8),
+        magic: (60, 1, 23),
+        magic_defense: (100, 1, 30),
+        agility: (40, 1, 20),
+        evasion: (180, 1, 20),
+        accuracy: (300, 1, 10),
+    },
+];
+
+const ENCOUNTER_YUNA_STATS: [AeonStatBlock; 20] = [
+    AeonStatBlock {
+        hp: 475,
+        mp: 84,
+        strength: 5,
+        defense: 5,
+        magic: 20,
+        magic_defense: 20,
+        agility: 10,
+        luck: 17,
+        evasion: 30,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 475,
+        mp: 104,
+        strength: 5,
+        defense: 5,
+        magic: 23,
+        magic_defense: 23,
+        agility: 10,
+        luck: 17,
+        evasion: 32,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 675,
+        mp: 104,
+        strength: 5,
+        defense: 7,
+        magic: 26,
+        magic_defense: 23,
+        agility: 13,
+        luck: 17,
+        evasion: 32,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 875,
+        mp: 104,
+        strength: 5,
+        defense: 7,
+        magic: 26,
+        magic_defense: 26,
+        agility: 13,
+        luck: 17,
+        evasion: 32,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 875,
+        mp: 124,
+        strength: 5,
+        defense: 7,
+        magic: 29,
+        magic_defense: 29,
+        agility: 13,
+        luck: 17,
+        evasion: 32,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1075,
+        mp: 144,
+        strength: 5,
+        defense: 7,
+        magic: 29,
+        magic_defense: 32,
+        agility: 16,
+        luck: 17,
+        evasion: 36,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1075,
+        mp: 144,
+        strength: 5,
+        defense: 7,
+        magic: 32,
+        magic_defense: 36,
+        agility: 16,
+        luck: 17,
+        evasion: 36,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1075,
+        mp: 164,
+        strength: 5,
+        defense: 7,
+        magic: 36,
+        magic_defense: 36,
+        agility: 20,
+        luck: 17,
+        evasion: 36,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1275,
+        mp: 184,
+        strength: 5,
+        defense: 7,
+        magic: 40,
+        magic_defense: 36,
+        agility: 20,
+        luck: 17,
+        evasion: 40,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1475,
+        mp: 184,
+        strength: 5,
+        defense: 11,
+        magic: 40,
+        magic_defense: 40,
+        agility: 24,
+        luck: 17,
+        evasion: 40,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1475,
+        mp: 204,
+        strength: 5,
+        defense: 11,
+        magic: 44,
+        magic_defense: 40,
+        agility: 24,
+        luck: 17,
+        evasion: 44,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1475,
+        mp: 204,
+        strength: 5,
+        defense: 11,
+        magic: 44,
+        magic_defense: 44,
+        agility: 28,
+        luck: 17,
+        evasion: 44,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1675,
+        mp: 224,
+        strength: 5,
+        defense: 11,
+        magic: 48,
+        magic_defense: 48,
+        agility: 28,
+        luck: 17,
+        evasion: 44,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1875,
+        mp: 224,
+        strength: 5,
+        defense: 11,
+        magic: 48,
+        magic_defense: 48,
+        agility: 32,
+        luck: 17,
+        evasion: 48,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1875,
+        mp: 244,
+        strength: 5,
+        defense: 11,
+        magic: 52,
+        magic_defense: 52,
+        agility: 32,
+        luck: 17,
+        evasion: 48,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 1875,
+        mp: 244,
+        strength: 5,
+        defense: 15,
+        magic: 52,
+        magic_defense: 52,
+        agility: 36,
+        luck: 17,
+        evasion: 52,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 2075,
+        mp: 264,
+        strength: 5,
+        defense: 15,
+        magic: 56,
+        magic_defense: 52,
+        agility: 36,
+        luck: 17,
+        evasion: 52,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 2075,
+        mp: 264,
+        strength: 5,
+        defense: 15,
+        magic: 56,
+        magic_defense: 56,
+        agility: 36,
+        luck: 17,
+        evasion: 56,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 2275,
+        mp: 304,
+        strength: 5,
+        defense: 15,
+        magic: 60,
+        magic_defense: 56,
+        agility: 40,
+        luck: 17,
+        evasion: 56,
+        accuracy: 3,
+    },
+    AeonStatBlock {
+        hp: 2275,
+        mp: 304,
+        strength: 5,
+        defense: 15,
+        magic: 60,
+        magic_defense: 60,
+        agility: 40,
+        luck: 17,
+        evasion: 60,
+        accuracy: 3,
+    },
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct YojimboActionData {
@@ -95,6 +591,12 @@ struct ActionDamageResult {
     damage: i32,
     pool: &'static str,
     crit: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DamagePool {
+    Hp,
+    Mp,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -205,6 +707,7 @@ pub struct SimulationState {
     encounters_count: i32,
     random_encounters_count: i32,
     zone_encounters_counts: HashMap<String, i32>,
+    bonus_aeon_stats: HashMap<Character, AeonStatBlock>,
     live_distance: i32,
     gil: i32,
     item_inventory: Vec<(Option<String>, i32)>,
@@ -220,12 +723,13 @@ pub struct SimulationState {
     scripted_turn_index: usize,
     respawn_wave_index: usize,
     sahagin_fourth_unlocked: bool,
+    echo_state_edits: bool,
     unsupported_count: usize,
 }
 
 impl SimulationState {
     pub fn new(seed: u32) -> Self {
-        Self {
+        let mut state = Self {
             rng: FfxRngTracker::new(seed),
             party: vec![Character::Tidus, Character::Auron],
             character_actors: default_character_actors(),
@@ -241,6 +745,10 @@ impl SimulationState {
             encounters_count: 0,
             random_encounters_count: 0,
             zone_encounters_counts: HashMap::new(),
+            bonus_aeon_stats: AEON_BONUS_CHARACTERS
+                .into_iter()
+                .map(|character| (character, AeonStatBlock::default()))
+                .collect(),
             live_distance: 0,
             gil: 300,
             item_inventory: {
@@ -261,20 +769,32 @@ impl SimulationState {
             scripted_turn_index: 0,
             respawn_wave_index: 0,
             sahagin_fourth_unlocked: false,
+            echo_state_edits: false,
             unsupported_count: 0,
-        }
+        };
+        state.calculate_aeon_stats();
+        state.reset_aeon_current_resources();
+        state
+    }
+
+    pub fn with_editor_echoes(mut self) -> Self {
+        self.echo_state_edits = true;
+        self
     }
 
     pub fn run_lines(&mut self, lines: &[String]) -> SimulationOutput {
+        let encounter_parties = infer_encounter_parties(lines);
+        let encounter_party_swaps = infer_encounter_party_swaps(lines);
         let mut rendered = Vec::with_capacity(lines.len());
         let mut multiline_comment = false;
-        for line in lines {
-            if line.starts_with("/*") {
+        for (line_index, line) in lines.iter().enumerate() {
+            let stripped = line.trim();
+            if stripped.starts_with("/*") {
                 multiline_comment = true;
             }
             if multiline_comment {
                 rendered.push(line.to_string());
-                if line.ends_with("*/") {
+                if stripped.ends_with("*/") {
                     multiline_comment = false;
                 }
                 continue;
@@ -282,11 +802,31 @@ impl SimulationState {
             if self.should_skip_tanker_placeholder_comment(line) {
                 continue;
             }
-            let rendered_line = self.execute_raw_line(line);
+            let line_to_execute = self
+                .choose_future_targeted_line(lines, line_index)
+                .unwrap_or_else(|| line.to_string());
+            let mut restore_planned_party_after_encounter = None;
+            if matches!(
+                parse_raw_action_line(&line_to_execute),
+                ParsedCommand::Encounter { .. }
+            ) {
+                if encounter_party_swaps.contains(&line_index) {
+                    // Python preserves the incoming party for encounters with explicit in-block swaps.
+                } else if let Some(planned_party) = encounter_parties.get(&line_index) {
+                    restore_planned_party_after_encounter = Some(planned_party.clone());
+                    self.sync_party_if_needed(planned_party);
+                }
+            }
+            let rendered_line = self.execute_raw_line(&line_to_execute);
+            if let Some(planned_party) = restore_planned_party_after_encounter {
+                if self.party_needs_sync(&planned_party) {
+                    self.party = planned_party;
+                }
+            }
             if rendered_line.is_empty() {
                 ensure_blank_line(&mut rendered);
             } else {
-                rendered.push(rendered_line);
+                append_rendered_lines(&mut rendered, &rendered_line);
             }
         }
         SimulationOutput {
@@ -295,13 +835,10 @@ impl SimulationState {
         }
     }
 
-    pub fn run_until_raw_line(&mut self, input: &str, cursor_line: usize) {
-        self.run_until_lines(input.lines().map(str::to_string), cursor_line);
-    }
-
     pub fn run_until_prepared_line(&mut self, input: &str, cursor_line: usize) {
-        let prepared = prepare_action_lines(input);
-        self.run_until_lines(prepared.lines.into_iter(), cursor_line);
+        let prepared = prepare_action_lines_before_raw_line(input, cursor_line);
+        let prepared_cursor_line = prepared.lines.len() + 1;
+        self.run_until_lines(prepared.lines.into_iter(), prepared_cursor_line);
     }
 
     fn run_until_lines<I>(&mut self, lines: I, cursor_line: usize)
@@ -310,11 +847,12 @@ impl SimulationState {
     {
         let mut multiline_comment = false;
         for raw_line in lines.into_iter().take(cursor_line.saturating_sub(1)) {
-            if raw_line.starts_with("/*") {
+            let stripped = raw_line.trim();
+            if stripped.starts_with("/*") {
                 multiline_comment = true;
             }
             if multiline_comment {
-                if raw_line.ends_with("*/") {
+                if stripped.ends_with("*/") {
                     multiline_comment = false;
                 }
                 continue;
@@ -328,6 +866,24 @@ impl SimulationState {
 
     pub fn party(&self) -> &[Character] {
         &self.party
+    }
+
+    pub fn sync_party_if_needed(&mut self, planned_party: &[Character]) {
+        if planned_party.is_empty() {
+            return;
+        }
+        if !self.party_needs_sync(planned_party) {
+            return;
+        }
+        self.party = planned_party.to_vec();
+    }
+
+    fn party_needs_sync(&self, planned_party: &[Character]) -> bool {
+        !planned_party.is_empty()
+            && (self.party.is_empty()
+                || planned_party
+                    .iter()
+                    .any(|character| !self.party.contains(character)))
     }
 
     pub fn next_actor(&self) -> Option<ActorId> {
@@ -349,6 +905,11 @@ impl SimulationState {
 
     pub fn character_ctb(&self, character: Character) -> Option<i32> {
         self.character_actor(character).map(|actor| actor.ctb)
+    }
+
+    pub fn character_shadow_ctb_fallback(&self, character: Character) -> Option<i32> {
+        self.character_actor(character)
+            .map(|actor| apply_haste_to_ctb(actor, actor.base_ctb() * 3))
     }
 
     pub fn set_character_ctb(&mut self, character: Character, ctb: i32) {
@@ -374,6 +935,158 @@ impl SimulationState {
         self.execute_line(line)
     }
 
+    fn choose_future_targeted_line(&self, lines: &[String], line_index: usize) -> Option<String> {
+        let chain_indices = self.consecutive_generic_action_indices(lines, line_index);
+        if chain_indices.len() <= 1 {
+            return None;
+        }
+        let (_, _, target_map) = self.choose_best_generic_action_chain(lines, &chain_indices, 0)?;
+        target_map.get(&line_index).cloned()
+    }
+
+    fn consecutive_generic_action_indices(
+        &self,
+        lines: &[String],
+        line_index: usize,
+    ) -> Vec<usize> {
+        let mut indices = Vec::new();
+        for index in line_index..lines.len() {
+            if indices.len() >= 2 {
+                break;
+            }
+            let line = &lines[index];
+            if !indices.is_empty() && (line.trim().is_empty() || line.trim_start().starts_with('#'))
+            {
+                break;
+            }
+            if self.generic_monster_target_name(line).is_none() {
+                if index == line_index {
+                    return Vec::new();
+                }
+                break;
+            }
+            indices.push(index);
+        }
+        indices
+    }
+
+    fn choose_best_generic_action_chain(
+        &self,
+        lines: &[String],
+        chain_indices: &[usize],
+        position: usize,
+    ) -> Option<(usize, Vec<usize>, HashMap<usize, String>)> {
+        if position >= chain_indices.len() {
+            return Some((
+                self.future_monster_turns_until_character(),
+                Vec::new(),
+                HashMap::new(),
+            ));
+        }
+
+        let line_index = chain_indices[position];
+        let target_name = self.generic_monster_target_name(&lines[line_index])?;
+        let candidates = self.monster_target_candidates(&target_name);
+        if candidates.is_empty() {
+            return None;
+        }
+
+        let mut best: Option<(usize, Vec<usize>, HashMap<usize, String>)> = None;
+        for slot in candidates {
+            let edited_line = replace_character_action_target(&lines[line_index], slot);
+            let mut preview = self.clone();
+            let rendered = preview.execute_line(&edited_line);
+            let current_turns = rendered_virtual_monster_turn_count(&rendered);
+            if let Some((future_turns, mut future_slots, future_map)) =
+                preview.choose_best_generic_action_chain(lines, chain_indices, position + 1)
+            {
+                let mut slot_tuple = vec![slot.0];
+                slot_tuple.append(&mut future_slots);
+                let mut target_map = future_map;
+                target_map.insert(line_index, edited_line);
+                let result = (current_turns + future_turns, slot_tuple, target_map);
+                if best
+                    .as_ref()
+                    .is_none_or(|current| (result.0, &result.1) < (current.0, &current.1))
+                {
+                    best = Some(result);
+                }
+            }
+        }
+        best
+    }
+
+    fn generic_monster_target_name(&self, line: &str) -> Option<String> {
+        let edited_line = edit_action_line(line);
+        let ParsedCommand::CharacterAction { action, args, .. } =
+            parse_edited_action_line(&edited_line)
+        else {
+            return None;
+        };
+        let target_name = args.first()?;
+        if target_name.parse::<MonsterSlot>().is_ok()
+            || matches!(target_name.as_str(), "party" | "monsters")
+        {
+            return None;
+        }
+        let action_data = data::action_data(&action)?;
+        if !matches!(
+            action_data.target,
+            ActionTarget::Single | ActionTarget::SingleMonster | ActionTarget::EitherParty
+        ) {
+            return None;
+        }
+        (!self.monster_target_candidates(target_name).is_empty()).then(|| target_name.clone())
+    }
+
+    fn monster_target_candidates(&self, target_name: &str) -> Vec<MonsterSlot> {
+        let target_family = monster_family(target_name);
+        self.monsters
+            .iter()
+            .filter(|actor| actor.is_alive())
+            .filter(|actor| {
+                actor
+                    .monster_key
+                    .as_deref()
+                    .is_some_and(|key| key == target_name || monster_family(key) == target_family)
+            })
+            .filter_map(|actor| match actor.id {
+                ActorId::Monster(slot) => Some(slot),
+                ActorId::Character(_) => None,
+            })
+            .collect()
+    }
+
+    fn future_monster_turns_until_character(&self) -> usize {
+        let mut preview = self.clone();
+        let mut turns = 0;
+        for _ in 0..100 {
+            let Some(actor_id) = preview.current_battle_state().next_actor() else {
+                break;
+            };
+            match actor_id {
+                ActorId::Character(_) => break,
+                ActorId::Monster(slot) => {
+                    if preview.is_manual_only_virtual_monster_turn(slot) {
+                        break;
+                    }
+                    turns += 1;
+                    if let Some(virtual_action) = preview.virtual_monster_action(slot) {
+                        preview.preview_virtual_monster_action(slot, &virtual_action.action);
+                    } else {
+                        preview.process_start_of_turn(actor_id);
+                        if preview.apply_actor_turn(actor_id, 3).is_some() {
+                            preview.process_end_of_turn(actor_id);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        turns
+    }
+
     fn should_skip_tanker_placeholder_comment(&self, line: &str) -> bool {
         self.current_encounter_name.as_deref() == Some("tanker")
             && is_tanker_placeholder_comment(line)
@@ -394,37 +1107,65 @@ impl SimulationState {
             ParsedCommand::Blank => String::new(),
             ParsedCommand::Comment(comment) => {
                 let mut comment_lines = vec![comment];
+                self.sync_monster_party_from_generated_encounter_comment(line);
                 comment_lines.extend(self.maybe_apply_sahagin_chief_spawn_comment(line));
                 comment_lines.join("\n")
             }
             ParsedCommand::Directive(directive) => self.apply_directive(&directive),
-            ParsedCommand::Party { initials } => self.change_party(&initials),
-            ParsedCommand::AdvanceRng { index, amount } => self.advance_rng(index, amount),
+            ParsedCommand::Party { initials } => self.render_party_command(&initials),
+            ParsedCommand::AdvanceRng { index, amount } => {
+                let output = self.advance_rng(index, amount);
+                if self.echo_state_edits && !output.starts_with("Error:") {
+                    edit_action_line(line)
+                } else {
+                    output
+                }
+            }
             ParsedCommand::Encounter {
                 name,
                 multizone,
                 zones,
-            } => self.start_encounter(&name, multizone, &zones),
+            } => self.render_encounter_command(&name, multizone, &zones),
             ParsedCommand::CharacterAction {
                 actor,
                 action,
                 args,
-            } => self.render_character_action_command(actor, &action, &args),
+            } => {
+                if self.echo_state_edits && matches!(action.as_str(), "escape" | "flee") {
+                    let outcome = self.apply_character_action_outcome(actor, &action, &args);
+                    if outcome.output.starts_with("Error:")
+                        || outcome.output.starts_with("# skipped:")
+                    {
+                        render_character_action_outcome(outcome)
+                    } else {
+                        let mut output_lines = outcome.pre_lines;
+                        if !output_lines.is_empty() {
+                            ensure_blank_line(&mut output_lines);
+                        }
+                        output_lines.push(line.to_string());
+                        output_lines.join("\n")
+                    }
+                } else {
+                    self.render_character_action_command(actor, &action, &args, line)
+                }
+            }
             ParsedCommand::MonsterAction {
                 actor,
                 action,
                 args,
-            } => self.render_monster_action_command(actor, &action, &args),
-            ParsedCommand::Equip { kind, args } => self.change_equipment(&kind, &args),
-            ParsedCommand::Summon { aeon } => self.summon(&aeon),
+            } => self.render_monster_action_command(actor, &action, &args, line),
+            ParsedCommand::Equip { kind, args } => {
+                self.render_equipment_command(&kind, &args, line)
+            }
+            ParsedCommand::Summon { aeon } => self.render_summon_command(&aeon),
             ParsedCommand::Spawn {
                 monster,
                 slot,
                 forced_ctb,
-            } => self.spawn_monster_from_command(&monster, slot, forced_ctb),
-            ParsedCommand::Element { args } => self.change_element(&args),
-            ParsedCommand::Stat { args } => self.change_stat(&args),
-            ParsedCommand::Heal { args } => self.heal_party(&args),
+            } => self.render_spawn_command(&monster, slot, forced_ctb),
+            ParsedCommand::Element { args } => self.render_element_command(&args, line),
+            ParsedCommand::Stat { args } => self.render_stat_command(&args),
+            ParsedCommand::Heal { args } => self.render_heal_command(&args),
             ParsedCommand::Ap { args } => self.change_ap(&args),
             ParsedCommand::Death { character } => self.character_death(character),
             ParsedCommand::Compatibility { amount } => self.change_compatibility(&amount),
@@ -443,15 +1184,22 @@ impl SimulationState {
                 steps,
                 continue_previous_zone,
             } => self.encounter_checks(&zone, &steps, continue_previous_zone),
-            ParsedCommand::EndEncounter => self.end_encounter(),
+            ParsedCommand::EndEncounter => {
+                let output = self.end_encounter();
+                if self.echo_state_edits && !output.starts_with("Error:") {
+                    line.to_string()
+                } else {
+                    output
+                }
+            }
             ParsedCommand::Status { args }
                 if args
                     .first()
                     .is_some_and(|arg| arg.eq_ignore_ascii_case("atb")) =>
             {
-                format!("ATB: {}", self.available_battle_state().ctb_order_string())
+                format!("status atb\n# ATB: {}", self.available_ctb_string())
             }
-            ParsedCommand::Status { args } => self.change_status(&args),
+            ParsedCommand::Status { args } => self.render_status_command(&args),
             ParsedCommand::ParserError { message } => message,
             ParsedCommand::Unknown { .. } => format!("Error: Impossible to parse \"{line}\""),
         };
@@ -463,6 +1211,15 @@ impl SimulationState {
 
     fn apply_directive(&self, directive: &str) -> String {
         directive.to_string()
+    }
+
+    fn render_party_command(&mut self, initials: &str) -> String {
+        let output = self.change_party(initials);
+        if self.echo_state_edits && !output.starts_with("Error:") {
+            format!("party {initials}")
+        } else {
+            output
+        }
     }
 
     fn change_party(&mut self, initials: &str) -> String {
@@ -833,9 +1590,7 @@ impl SimulationState {
         let Some(raw_slots) = slots.parse::<u8>().ok().filter(|slots| *slots <= 4) else {
             return Err("Error: Slots must be between 0 and 4".to_string());
         };
-        let mut args = vec![character.input_name().to_string(), raw_slots.to_string()];
-        args.extend(ability_args.iter().cloned());
-        let abilities = parse_equipment_abilities(&args)?;
+        let abilities = parse_inventory_equipment_abilities(ability_args)?;
         let slots = raw_slots.max(abilities.display_names.len() as u8);
         let gil_value = equipment_gil_value(slots, &abilities.display_names);
         let display = format_inventory_equipment(
@@ -1740,17 +2495,7 @@ impl SimulationState {
         if action.affected_by_silence && actor.statuses.contains(&Status::Silence) {
             return false;
         }
-        if action.mp_cost <= 0 {
-            return true;
-        }
-        let mp_cost = if actor.has_auto_ability(AutoAbility::OneMpCost) {
-            1
-        } else if actor.has_auto_ability(AutoAbility::HalfMpCost) {
-            (action.mp_cost + 1) / 2
-        } else {
-            action.mp_cost
-        };
-        actor.current_mp >= mp_cost
+        actor.current_mp >= action.mp_cost
     }
 
     fn magus_can_attempt_action(&self, sister: Character, action_key: &str) -> bool {
@@ -2214,7 +2959,6 @@ impl SimulationState {
         let mut output_lines = self.advance_virtual_turns_before(actor_id);
         self.process_start_of_turn(actor_id);
         let Some(spent_ctb) = self.apply_actor_turn(actor_id, 3) else {
-            self.unsupported_count += 1;
             output_lines.push(format!("Error: Unknown actor for action: {sister}"));
             return output_lines.join("\n");
         };
@@ -2239,6 +2983,7 @@ impl SimulationState {
                     return "Error: amount must be an integer".to_string();
                 };
                 self.encounters_count = count;
+                self.calculate_aeon_stats();
                 format!("Total encounters count set to {count}")
             }
             "random" => {
@@ -2259,6 +3004,123 @@ impl SimulationState {
                 };
                 self.zone_encounters_counts.insert(zone.to_string(), count);
                 format!("{display_name} encounters count set to {count}")
+            }
+        }
+    }
+
+    fn calculate_aeon_stats(&mut self) {
+        let Some(yuna) = self.character_actor(Character::Yuna) else {
+            return;
+        };
+        let yuna_stats = AeonStatBlock {
+            hp: yuna.max_hp.min(9_999),
+            mp: yuna.max_mp.min(999),
+            strength: yuna.combat_stats.strength,
+            defense: yuna.combat_stats.defense,
+            magic: yuna.combat_stats.magic,
+            magic_defense: yuna.combat_stats.magic_defense,
+            agility: yuna.agility as i32,
+            luck: yuna.combat_stats.luck,
+            evasion: yuna.combat_stats.evasion,
+            accuracy: yuna.combat_stats.accuracy,
+        };
+        let enc_tier = ((self.encounters_count - 30) / 30).clamp(0, 19) as usize;
+        let encounter_stats = ENCOUNTER_YUNA_STATS[enc_tier];
+        let yuna_power = aeon_power_base(yuna_stats);
+        let encounter_power = aeon_power_base(encounter_stats);
+        for formula in AEON_STAT_FORMULAS {
+            let bonus = self
+                .bonus_aeon_stats
+                .get(&formula.character)
+                .copied()
+                .unwrap_or_default();
+            let Some(actor) = self.actor_mut(ActorId::Character(formula.character)) else {
+                continue;
+            };
+            actor.max_hp = aeon_formula_value(yuna_stats.hp, yuna_power, formula.hp)
+                .max(aeon_formula_value(
+                    encounter_stats.hp,
+                    encounter_power,
+                    formula.hp,
+                ))
+                .saturating_add(bonus.hp)
+                .clamp(0, 99_999);
+            actor.max_mp = aeon_formula_value(yuna_stats.mp, yuna_power, formula.mp)
+                .max(aeon_formula_value(
+                    encounter_stats.mp,
+                    encounter_power,
+                    formula.mp,
+                ))
+                .saturating_add(bonus.mp)
+                .clamp(0, 9_999);
+            actor.combat_stats.strength = aeon_calculated_stat(
+                yuna_stats.strength,
+                encounter_stats.strength,
+                yuna_power,
+                encounter_power,
+                formula.strength,
+                bonus.strength,
+            );
+            actor.combat_stats.defense = aeon_calculated_stat(
+                yuna_stats.defense,
+                encounter_stats.defense,
+                yuna_power,
+                encounter_power,
+                formula.defense,
+                bonus.defense,
+            );
+            actor.combat_stats.magic = aeon_calculated_stat(
+                yuna_stats.magic,
+                encounter_stats.magic,
+                yuna_power,
+                encounter_power,
+                formula.magic,
+                bonus.magic,
+            );
+            actor.combat_stats.magic_defense = aeon_calculated_stat(
+                yuna_stats.magic_defense,
+                encounter_stats.magic_defense,
+                yuna_power,
+                encounter_power,
+                formula.magic_defense,
+                bonus.magic_defense,
+            );
+            actor.agility = aeon_calculated_stat(
+                yuna_stats.agility,
+                encounter_stats.agility,
+                yuna_power,
+                encounter_power,
+                formula.agility,
+                bonus.agility,
+            ) as u8;
+            actor.combat_stats.luck = (yuna_stats.luck + bonus.luck).clamp(0, 255);
+            actor.combat_stats.evasion = aeon_calculated_stat(
+                yuna_stats.evasion,
+                encounter_stats.evasion,
+                yuna_power,
+                encounter_power,
+                formula.evasion,
+                bonus.evasion,
+            );
+            actor.combat_stats.accuracy = aeon_calculated_stat(
+                yuna_stats.accuracy,
+                encounter_stats.accuracy,
+                yuna_power,
+                encounter_power,
+                formula.accuracy,
+                bonus.accuracy,
+            );
+            actor.current_hp = actor.current_hp.min(actor.effective_max_hp());
+            actor.current_mp = actor.current_mp.min(actor.effective_max_mp());
+        }
+    }
+
+    fn reset_aeon_current_resources(&mut self) {
+        for formula in AEON_STAT_FORMULAS {
+            let character = formula.character;
+            if let Some(actor) = self.actor_mut(ActorId::Character(character)) {
+                actor.current_hp = actor.effective_max_hp();
+                actor.current_mp = actor.effective_max_mp();
             }
         }
     }
@@ -2347,6 +3209,37 @@ impl SimulationState {
         check
     }
 
+    fn render_encounter_command(
+        &mut self,
+        name: &str,
+        multizone: bool,
+        zones: &[String],
+    ) -> String {
+        let display_line = if multizone {
+            let zone_suffix = if zones.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", zones.join(" "))
+            };
+            format!("encounter multizone{zone_suffix}")
+        } else {
+            format!("encounter {name}")
+        };
+        let summary = self.start_encounter(name, multizone, zones);
+        if summary.starts_with("Error:") {
+            return summary;
+        }
+        let header_name = self
+            .current_encounter_name
+            .as_deref()
+            .unwrap_or(name)
+            .replace('_', " ");
+        format!(
+            "{display_line}\n# ===== {} =====\n# {summary}",
+            titlecase_encounter_header(&header_name)
+        )
+    }
+
     fn start_encounter(&mut self, name: &str, multizone: bool, zones: &[String]) -> String {
         if multizone {
             return self.start_multizone_encounter(zones);
@@ -2358,6 +3251,7 @@ impl SimulationState {
             return format!("Error: No encounter named \"{encounter_name}\"");
         }
 
+        let had_prior_encounter = self.encounters_count > 0 || self.random_encounters_count > 0;
         self.process_start_of_encounter();
         let formation = boss_or_simulated_formation.or_else(|| {
             let formation_roll = self.rng.advance_rng(1);
@@ -2416,7 +3310,14 @@ impl SimulationState {
         self.sahagin_fourth_unlocked = false;
         self.set_party_icvs(condition);
         self.set_monster_icvs(condition);
-        self.normalize_ctbs();
+        let normalize_before_summary = !had_prior_encounter || encounter_name == "sahagin_chiefs";
+        if normalize_before_summary {
+            self.normalize_ctbs();
+        }
+        let ctb_summary = self.current_battle_state().ctb_order_string();
+        if had_prior_encounter && !normalize_before_summary {
+            self.normalize_ctbs();
+        }
 
         let (prefix, indices) = if is_simulated {
             (
@@ -2447,7 +3348,6 @@ impl SimulationState {
             .as_ref()
             .map(|formation| formation.display_name.as_str())
             .unwrap_or(encounter_name.as_str());
-        let ctb_summary = self.current_battle_state().ctb_order_string();
         if prefix == "Random Encounter" {
             let zone_name = formation
                 .as_ref()
@@ -2458,10 +3358,28 @@ impl SimulationState {
                 format_condition(condition)
             )
         } else {
-            format!(
-                "{prefix}: {indices} | {display_name} | {} | {ctb_summary}",
-                format_condition(condition)
-            )
+            let active_monster_keys = self
+                .monsters
+                .iter()
+                .filter_map(|monster| monster.monster_key.clone())
+                .collect::<Vec<_>>();
+            let condition_name = formation.as_ref().map_or_else(
+                || format_condition(condition).to_string(),
+                |formation| {
+                    let monster_keys =
+                        if active_monster_keys.is_empty() || formation.monsters.is_empty() {
+                            &formation.monsters
+                        } else {
+                            &active_monster_keys
+                        };
+                    format!(
+                        "{} {}",
+                        data::format_monster_list(monster_keys),
+                        format_condition(condition)
+                    )
+                },
+            );
+            format!("{prefix}: {indices} | {display_name} | {condition_name} | {ctb_summary}")
         }
     }
 
@@ -2520,11 +3438,6 @@ impl SimulationState {
 
     fn process_start_of_encounter(&mut self) {
         self.ctb_since_last_action = 0;
-        self.last_actor = None;
-        self.last_targets.clear();
-        self.actor_last_targets.clear();
-        self.actor_last_attackers.clear();
-        self.actor_provokers.clear();
         self.magus_last_commands.clear();
         self.magus_last_actions.clear();
         self.magus_last_action_lists.clear();
@@ -2535,6 +3448,7 @@ impl SimulationState {
         self.scripted_turn_index = 0;
         self.respawn_wave_index = 0;
         self.sahagin_fourth_unlocked = false;
+        self.clear_previous_encounter_monster_memory();
         for actor in &mut self.character_actors {
             if actor.statuses.contains(&Status::Death) {
                 actor.current_hp = 1;
@@ -2544,7 +3458,27 @@ impl SimulationState {
             actor.clear_statuses();
             apply_auto_statuses(actor);
         }
+        self.calculate_aeon_stats();
         self.monsters.clear();
+    }
+
+    fn clear_previous_encounter_monster_memory(&mut self) {
+        if matches!(self.last_actor, Some(ActorId::Monster(_))) {
+            self.last_actor = None;
+        }
+        self.last_targets
+            .retain(|target| !matches!(target, ActorId::Monster(_)));
+        for targets in self.actor_last_targets.values_mut() {
+            targets.retain(|target| !matches!(target, ActorId::Monster(_)));
+        }
+        self.actor_last_targets
+            .retain(|actor, _| !matches!(actor, ActorId::Monster(_)));
+        self.actor_last_attackers.retain(|actor, attacker| {
+            !matches!(actor, ActorId::Monster(_)) && !matches!(attacker, ActorId::Monster(_))
+        });
+        self.actor_provokers.retain(|actor, provoker| {
+            !matches!(actor, ActorId::Monster(_)) && !matches!(provoker, ActorId::Monster(_))
+        });
     }
 
     fn create_monster_party(&mut self, encounter_name: &str, monster_names: Option<&[String]>) {
@@ -2564,6 +3498,8 @@ impl SimulationState {
                 template.immune_to_delay,
                 template.max_hp,
             );
+            actor.max_mp = template.max_mp;
+            actor.current_mp = template.max_mp;
             actor.set_combat_stats(template.combat_stats);
             actor.set_elemental_affinities(template.elemental_affinities.clone());
             actor.set_status_resistances(template.status_resistances.clone());
@@ -2573,6 +3509,35 @@ impl SimulationState {
         }
         self.advance_duplicate_monster_rngs(&templates);
         self.apply_scripted_starting_monster_party_shape(encounter_name);
+    }
+
+    fn sync_monster_party_from_generated_encounter_comment(&mut self, line: &str) -> bool {
+        if self.current_encounter_name.is_none() || !self.monsters.iter().all(BattleActor::is_alive)
+        {
+            return false;
+        }
+        let Some((monster_keys, ctb_summary)) = parse_generated_encounter_comment_party(line)
+        else {
+            return false;
+        };
+        let mut monsters = Vec::new();
+        for (index, monster_key) in monster_keys.iter().enumerate() {
+            let slot = MonsterSlot(index + 1);
+            let Some(mut actor) = create_monster_actor(monster_key, slot) else {
+                return false;
+            };
+            if let Some(ctb) = ctb_summary.monsters.get(&slot).copied() {
+                actor.ctb = ctb;
+            }
+            monsters.push(actor);
+        }
+        for (character, ctb) in ctb_summary.characters {
+            if let Some(actor) = self.actor_mut(ActorId::Character(character)) {
+                actor.ctb = ctb;
+            }
+        }
+        self.monsters = monsters;
+        true
     }
 
     fn apply_scripted_starting_monster_party_shape(&mut self, encounter_name: &str) {
@@ -2621,9 +3586,13 @@ impl SimulationState {
                     if matches!(actor.id, ActorId::Character(Character::Unknown)) {
                         continue;
                     }
-                    let active = party.contains(&character_id(actor));
+                    let character = character_id(actor);
+                    let active = party.contains(&character);
                     let has_first_strike = actor.has_auto_ability(AutoAbility::FirstStrike);
-                    if active && has_first_strike && !actor_is_magus_sister(actor) {
+                    if !active && !matches!(character, Character::Sandy | Character::Mindy) {
+                        continue;
+                    }
+                    if active && has_first_strike {
                         continue;
                     }
                     actor.ctb = apply_haste_to_ctb(actor, actor.base_ctb() * 3);
@@ -2637,9 +3606,12 @@ impl SimulationState {
                     }
                     let rng_index = (20 + actor.index).min(27);
                     let variance_roll = self.rng.advance_rng(rng_index);
-                    let active = party.contains(&character_id(actor));
+                    let character = character_id(actor);
+                    let active = party.contains(&character);
                     let has_first_strike = actor.has_auto_ability(AutoAbility::FirstStrike);
-                    if active && has_first_strike && !actor_is_magus_sister(actor) {
+                    if !matches!(character, Character::Sandy | Character::Mindy)
+                        && (!active || has_first_strike)
+                    {
                         continue;
                     }
                     let variance = ICV_VARIANCE[actor.agility as usize] as u32 + 1;
@@ -2680,7 +3652,9 @@ impl SimulationState {
         actor: Character,
         action: &str,
         args: &[String],
+        raw_line: &str,
     ) -> String {
+        let display_args = self.display_character_action_args(actor, action, args);
         let outcome = self.apply_character_action_outcome(actor, action, args);
         if !outcome.command_echoable
             || outcome.output.starts_with("Error:")
@@ -2692,11 +3666,69 @@ impl SimulationState {
         if !output_lines.is_empty() {
             ensure_blank_line(&mut output_lines);
         }
-        output_lines.push(format_character_action_line(actor, action, args));
+        let preserve_raw_line = (display_args == args
+            && raw_line
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_whitespace()))
+            || (args.is_empty()
+                && raw_line
+                    .chars()
+                    .last()
+                    .is_some_and(|character| character.is_whitespace()));
+        let display_line = if preserve_raw_line {
+            raw_line.to_string()
+        } else {
+            let display_args = if args
+                .first()
+                .is_some_and(|arg| monster_family(arg) == "worker")
+            {
+                outcome
+                    .damage_comment
+                    .as_deref()
+                    .and_then(first_monster_slot_in_comment)
+                    .map(|slot| {
+                        let mut args = args.to_vec();
+                        args[0] = format!("m{}", slot.0);
+                        args
+                    })
+                    .unwrap_or(display_args)
+            } else {
+                display_args
+            };
+            format_character_action_line(actor, action, &display_args)
+        };
+        output_lines.push(display_line);
         if let Some(comment) = outcome.damage_comment {
             output_lines.push(comment);
         }
         output_lines.join("\n")
+    }
+
+    fn display_character_action_args(
+        &self,
+        actor: Character,
+        action: &str,
+        args: &[String],
+    ) -> Vec<String> {
+        let mut display_args = args.to_vec();
+        let Some(first_arg) = display_args.first_mut() else {
+            return display_args;
+        };
+        if first_arg.parse::<MonsterSlot>().is_ok() {
+            return display_args;
+        }
+        let Some(action_data) = self.action_data_for_actor(ActorId::Character(actor), action)
+        else {
+            return display_args;
+        };
+        if !action_target_accepts_explicit_monster(&action_data.target) {
+            return display_args;
+        }
+        if let Some(slot) = self.resolve_existing_monster_target_arg(first_arg) {
+            *first_arg = format!("m{}", slot.0);
+        }
+        display_args
     }
 
     fn apply_character_action(
@@ -2715,8 +3747,34 @@ impl SimulationState {
         action: &str,
         args: &[String],
     ) -> CharacterActionOutcome {
+        let normalized_args;
+        let args = if action == "use_crane"
+            && args.is_empty()
+            && self.current_encounter_name.as_deref() == Some("oblitzerator")
+        {
+            normalized_args = vec!["m2".to_string()];
+            normalized_args.as_slice()
+        } else {
+            args
+        };
         let actor_id = ActorId::Character(actor);
-        if !action.ends_with("_counter") {
+        let Some(action_data) = self.action_data_for_actor(actor_id, action) else {
+            if !action.ends_with("_counter") {
+                if let Some(actor_state) = self.actor(actor_id) {
+                    if !actor_state.can_take_turn() {
+                        return CharacterActionOutcome::from_output(skipped_action_comment(
+                            &format_character_action_line(actor, action, args),
+                            actor_state,
+                        ));
+                    }
+                }
+            }
+            return CharacterActionOutcome::from_output(format!(
+                "Error: No action named \"{action}\""
+            ));
+        };
+        let availability_ignored_action = matches!(action, "defend" | "escape" | "flee");
+        if !action.ends_with("_counter") && !availability_ignored_action {
             if let Some(actor_state) = self.actor(actor_id) {
                 if !actor_state.can_take_turn() {
                     return CharacterActionOutcome::from_output(skipped_action_comment(
@@ -2726,11 +3784,6 @@ impl SimulationState {
                 }
             }
         }
-        let Some(action_data) = self.action_data_for_actor(actor_id, action) else {
-            return CharacterActionOutcome::from_output(format!(
-                "Error: No action named \"{action}\""
-            ));
-        };
         if !action_data.can_use_in_combat {
             return CharacterActionOutcome::from_output(format!(
                 "Error: Action {} can't be used in battle",
@@ -2767,10 +3820,13 @@ impl SimulationState {
         if !is_counter && !scripted_applied {
             output_lines.extend(self.advance_virtual_turns_before(actor_id));
         }
+        if !is_counter && is_aeon_character(actor) && !self.party.contains(&actor) {
+            self.party = vec![actor];
+        }
         let rank = action_data.rank;
         if let Some(gil) = bribe_gil {
+            self.process_start_of_turn(actor_id);
             let Some(spent_ctb) = self.apply_actor_turn(actor_id, rank) else {
-                self.unsupported_count += 1;
                 output_lines.push(format!("Error: Unknown actor for action: {actor}"));
                 return CharacterActionOutcome {
                     pre_lines: Vec::new(),
@@ -2781,6 +3837,7 @@ impl SimulationState {
             };
             ensure_blank_line(&mut output_lines);
             output_lines.push(self.apply_bribe_action(actor, args, gil, spent_ctb));
+            self.process_end_of_turn(actor_id);
             if let Some(actor_id) = prepared_temporary_target {
                 self.retire_temporary_actor(actor_id);
             }
@@ -2802,7 +3859,6 @@ impl SimulationState {
             0
         } else {
             let Some(spent_ctb) = self.apply_actor_turn(actor_id, rank) else {
-                self.unsupported_count += 1;
                 output_lines.push(format!("Error: Unknown actor for action: {actor}"));
                 return CharacterActionOutcome {
                     pre_lines: Vec::new(),
@@ -2881,7 +3937,12 @@ impl SimulationState {
             return None;
         };
         if matches!(target_name.as_str(), "party" | "monsters")
-            || self.resolve_actor_id(target_name).is_some()
+            || self.resolve_existing_actor_id(target_name).is_some()
+        {
+            return None;
+        }
+        if data::monster_stats(target_name).is_none()
+            && self.resolve_actor_id(target_name).is_some()
         {
             return None;
         }
@@ -2937,6 +3998,7 @@ impl SimulationState {
                 actor_label_for_id(target_id)
             );
         };
+        self.record_action_target_memory(ActorId::Character(user), vec![target_id], false);
         let monster_label = actor_label(&target);
         let bribe_item = target
             .monster_key
@@ -3014,7 +4076,9 @@ impl SimulationState {
         actor: MonsterActionActor,
         action: &str,
         args: &[String],
+        raw_line: &str,
     ) -> String {
+        let actor_is_slot = matches!(actor, MonsterActionActor::Slot(_));
         let (display_line, outcome) = match actor {
             MonsterActionActor::Slot(slot) => (
                 format_monster_action_line(slot, action, args),
@@ -3025,9 +4089,24 @@ impl SimulationState {
                 self.apply_named_monster_action_outcome(&monster, action, args),
             ),
         };
-        if outcome.output.starts_with("Error:") || outcome.output.starts_with("# skipped:") {
+        if outcome.output.starts_with("Error: Available actions") && actor_is_slot {
+            return raw_line.to_string();
+        }
+        if outcome.output.starts_with("Error:") {
             return outcome.output;
         }
+        if outcome.output.starts_with("# skipped:") {
+            return outcome.output;
+        }
+        let display_line = if raw_line
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_whitespace())
+        {
+            raw_line.to_string()
+        } else {
+            display_line
+        };
         append_optional_output_line(display_line, outcome.damage_comment)
     }
 
@@ -3103,25 +4182,29 @@ impl SimulationState {
     ) -> MonsterActionOutcome {
         let actor_id = ActorId::Monster(slot);
         if validate_action_table {
-            let Some(actor) = self.actor(actor_id) else {
+            if self.actor(actor_id).is_none() {
                 return MonsterActionOutcome::from_output(format!(
                     "Error: No monster in slot {}",
                     slot.0
                 ));
             };
-            if !actor.can_take_turn() {
-                return MonsterActionOutcome::from_output(skipped_action_comment(
-                    &format_monster_action_line(slot, action, _args),
-                    actor,
-                ));
-            }
         } else {
             self.ensure_monster_slot(slot);
         }
         let action_name = if validate_action_table {
             match self.resolve_monster_action_name(actor_id, slot, action) {
                 Ok(action_name) => action_name,
-                Err(message) => return MonsterActionOutcome::from_output(message),
+                Err(message) => {
+                    if let Some(actor) = self.actor(actor_id) {
+                        if !actor.can_take_turn() {
+                            return MonsterActionOutcome::from_output(skipped_action_comment(
+                                &format_monster_action_line(slot, action, _args),
+                                actor,
+                            ));
+                        }
+                    }
+                    return MonsterActionOutcome::from_output(message);
+                }
             }
         } else {
             action.to_string()
@@ -3151,7 +4234,6 @@ impl SimulationState {
             0
         } else {
             let Some(spent_ctb) = self.apply_actor_turn(actor_id, rank) else {
-                self.unsupported_count += 1;
                 return MonsterActionOutcome::from_output(format!(
                     "Error: Unknown monster slot for action: m{}",
                     slot.0
@@ -3485,6 +4567,11 @@ impl SimulationState {
 
     fn advance_virtual_turns_before(&mut self, expected_actor: ActorId) -> Vec<String> {
         let mut output_lines = Vec::new();
+        if let ActorId::Character(character) = expected_actor {
+            if !self.party.contains(&character) {
+                return output_lines;
+            }
+        }
         for virtual_turns in 0..100 {
             let Some(actor_id) = self.current_battle_state().next_actor() else {
                 break;
@@ -3521,6 +4608,12 @@ impl SimulationState {
                     }
                 }
             }
+            if self
+                .actor(expected_actor)
+                .is_some_and(|actor| !actor.can_take_turn())
+            {
+                break;
+            }
             if virtual_turns == 99 {
                 output_lines.push(format!(
                     "# warning: stopped after {} virtual turns before '{}'",
@@ -3550,6 +4643,11 @@ impl SimulationState {
             if let Some(actor) = self.actor_mut(actor_id) {
                 actor.current_hp = current_hp;
                 actor.current_mp = current_mp;
+                if actor.current_hp <= 0 {
+                    actor.buffs.clear();
+                    actor.clear_statuses();
+                    actor.set_status(Status::Death, 254);
+                }
             }
         }
         let actor_id = ActorId::Monster(slot);
@@ -3596,7 +4694,7 @@ impl SimulationState {
             }
             self.respawn_wave_index = 2;
             return (1..=5)
-                .map(|slot| self.spawn_monster("sinscale_6", MonsterSlot(slot), None))
+                .map(|slot| self.render_hidden_spawn("sinscale_6", slot))
                 .collect();
         }
         let Some(monster_name) = scripted_respawn_monster(encounter_name, self.respawn_wave_index)
@@ -3605,9 +4703,18 @@ impl SimulationState {
         };
         self.respawn_wave_index += 1;
         vec![
-            self.spawn_monster(monster_name, MonsterSlot(1), None),
-            self.spawn_monster(monster_name, MonsterSlot(2), None),
+            self.render_hidden_spawn(monster_name, 1),
+            self.render_hidden_spawn(monster_name, 2),
         ]
+    }
+
+    fn render_hidden_spawn(&mut self, monster_name: &str, slot: usize) -> String {
+        let output = self.spawn_monster(monster_name, MonsterSlot(slot), None);
+        if output.starts_with("Error:") {
+            output
+        } else {
+            format!("spawn {monster_name} {slot}")
+        }
     }
 
     fn maybe_apply_sahagin_chief_spawn_comment(&mut self, line: &str) -> Vec<String> {
@@ -3627,14 +4734,14 @@ impl SimulationState {
             .collect::<Vec<_>>();
         let mut output_lines = dead_slots
             .into_iter()
-            .map(|slot| self.spawn_monster("sahagin_chief", MonsterSlot(slot), None))
+            .map(|slot| self.render_hidden_spawn("sahagin_chief", slot))
             .collect::<Vec<_>>();
         if fourth_appears {
             if self
                 .actor(ActorId::Monster(MonsterSlot(4)))
                 .is_none_or(|actor| !actor.is_alive())
             {
-                output_lines.push(self.spawn_monster("sahagin_chief", MonsterSlot(4), None));
+                output_lines.push(self.render_hidden_spawn("sahagin_chief", 4));
             }
             self.sahagin_fourth_unlocked = true;
         }
@@ -3669,15 +4776,15 @@ impl SimulationState {
                 });
             }
         }
+        let action_names = data::monster_action_names(monster_key)?;
         if let Some(action) = data::default_monster_action(monster_key) {
-            if data::monster_action_data(monster_key, action).is_some() {
+            if action_names.iter().any(|name| name == action) {
                 return Some(VirtualMonsterAction {
                     action: action.to_string(),
                     preview_display: None,
                 });
             }
         }
-        let action_names = data::monster_action_names(monster_key)?;
         if action_names.iter().any(|action| action == "attack") {
             return Some(VirtualMonsterAction {
                 action: "attack".to_string(),
@@ -3788,7 +4895,8 @@ impl SimulationState {
                     }
                 }
             } else {
-                for application in &action_data.status_applications {
+                let status_applications = self.merged_status_applications(user, action_data);
+                for application in &status_applications {
                     let applied = self.apply_action_status_to_actor(user, target, application);
                     result.statuses.push((application.status, applied));
                 }
@@ -3798,18 +4906,13 @@ impl SimulationState {
                     }
                 }
             }
-            if action_data.heals && !action_data.damages_hp {
+            if action_data.heals && !action_data.damages_hp && !action_data.damages_ctb {
                 self.heal_actor(target);
             }
             for buff in &action_data.buffs {
                 if let Some(stacks) = self.apply_buff_to_actor(target, buff.buff, buff.amount) {
                     result.buffs.push((buff.buff, stacks));
                 }
-            }
-            if action_data.uses_weapon_properties {
-                result
-                    .statuses
-                    .extend(self.apply_weapon_statuses(user, target));
             }
             self.apply_petrify_final_status_cleanup(target);
             if action_data.has_weak_delay {
@@ -3827,23 +4930,64 @@ impl SimulationState {
                     .is_some_and(|actor| actor.statuses.contains(&Status::Death));
             results.push(result);
         }
-        if !resolved_targets.is_empty() {
-            self.last_targets = resolved_targets;
-            self.actor_last_targets
-                .insert(user, self.last_targets.clone());
-            for target in &self.last_targets {
-                self.actor_last_attackers.insert(*target, user);
-            }
-            if action_data.key == "provoke" {
-                for target in &self.last_targets {
-                    self.actor_provokers.insert(*target, user);
-                }
-            }
-        }
+        self.record_action_target_memory(user, resolved_targets, action_data.key == "provoke");
         if action_data.destroys_user {
             self.apply_status_to_actor(user, Status::Eject);
         }
         results
+    }
+
+    fn record_action_target_memory(
+        &mut self,
+        user: ActorId,
+        resolved_targets: Vec<ActorId>,
+        records_provoke: bool,
+    ) {
+        self.last_targets = resolved_targets;
+        self.actor_last_targets
+            .insert(user, self.last_targets.clone());
+        if self.last_targets.is_empty() {
+            return;
+        }
+        for target in &self.last_targets {
+            self.actor_last_attackers.insert(*target, user);
+        }
+        if records_provoke {
+            for target in &self.last_targets {
+                self.actor_provokers.insert(*target, user);
+            }
+        }
+    }
+
+    fn merged_status_applications(
+        &self,
+        user: ActorId,
+        action: &ActionData,
+    ) -> Vec<data::ActionStatus> {
+        let mut applications = action.status_applications.clone();
+        if !action.uses_weapon_properties {
+            return applications;
+        }
+        let Some(actor) = self.actor(user) else {
+            return applications;
+        };
+        for weapon_application in actor
+            .weapon_abilities
+            .iter()
+            .filter_map(|ability| weapon_status_application(*ability))
+        {
+            if let Some(existing) = applications
+                .iter_mut()
+                .find(|application| application.status == weapon_application.status)
+            {
+                if weapon_application.chance > existing.chance {
+                    *existing = weapon_application;
+                }
+            } else {
+                applications.push(weapon_application);
+            }
+        }
+        applications
     }
 
     fn reflected_action_target(&mut self, target: ActorId, action: &ActionData) -> ActorId {
@@ -3883,7 +5027,7 @@ impl SimulationState {
             }
             cost
         };
-        actor.current_mp -= mp_cost;
+        actor.current_mp = (actor.current_mp - mp_cost).max(0);
     }
 
     fn change_equipment(&mut self, kind: &str, args: &[String]) -> String {
@@ -3911,7 +5055,6 @@ impl SimulationState {
         };
         let slots = raw_slots.max(abilities.display_names.len() as u8);
         let Some(actor) = self.actor_mut(ActorId::Character(character)) else {
-            self.unsupported_count += 1;
             return format!(
                 "Error: unknown equipment actor: {}",
                 character.display_name()
@@ -3945,6 +5088,15 @@ impl SimulationState {
         )
     }
 
+    fn render_equipment_command(&mut self, kind: &str, args: &[String], raw_line: &str) -> String {
+        let output = self.change_equipment(kind, args);
+        if self.echo_state_edits && !output.starts_with("Error:") {
+            raw_line.to_string()
+        } else {
+            output
+        }
+    }
+
     fn summon(&mut self, aeon_name: &str) -> String {
         if aeon_name.is_empty() {
             return "Error: Usage: summon [aeon name]".to_string();
@@ -3955,6 +5107,15 @@ impl SimulationState {
         let old_party = self.format_party();
         self.party = party;
         format!("Party: {old_party} -> {}", self.format_party())
+    }
+
+    fn render_summon_command(&mut self, aeon_name: &str) -> String {
+        let output = self.summon(aeon_name);
+        if self.echo_state_edits && !output.starts_with("Error:") {
+            format!("summon {aeon_name}")
+        } else {
+            output
+        }
     }
 
     fn spawn_monster(
@@ -4008,6 +5169,22 @@ impl SimulationState {
         self.spawn_monster(monster_name, MonsterSlot(slot), forced_ctb)
     }
 
+    fn render_spawn_command(
+        &mut self,
+        monster_name: &str,
+        slot: usize,
+        forced_ctb: Option<i32>,
+    ) -> String {
+        let output = self.spawn_monster_from_command(monster_name, slot, forced_ctb);
+        if output.starts_with("Error:") {
+            return output;
+        }
+        match forced_ctb {
+            Some(ctb) => format!("spawn {monster_name} {slot} {ctb}"),
+            None => format!("spawn {monster_name} {slot}"),
+        }
+    }
+
     fn change_element(&mut self, args: &[String]) -> String {
         if args.len() < 3 {
             return "Error: Usage: element [monster slot] [element] [affinity]".to_string();
@@ -4043,6 +5220,15 @@ impl SimulationState {
             element_display_name(element),
             elemental_affinity_display_name(affinity)
         )
+    }
+
+    fn render_element_command(&mut self, args: &[String], raw_line: &str) -> String {
+        let output = self.change_element(args);
+        if self.echo_state_edits && !output.starts_with("Error:") {
+            raw_line.to_string()
+        } else {
+            output
+        }
     }
 
     fn python_element_monster_slot(&self, slot: &str) -> Result<ActorId, String> {
@@ -4081,8 +5267,14 @@ impl SimulationState {
                 return format!("Error: No monster in slot {}", slot.0);
             }
         }
+        if let ActorId::Character(character) = actor_id {
+            if let Some(stat_name) = stat_name.as_deref() {
+                if stat_name != "ctb" {
+                    return self.change_character_stat(character, stat_name, amount);
+                }
+            }
+        }
         let Some(actor) = self.actor_mut(actor_id) else {
-            self.unsupported_count += 1;
             return format!("Error: unknown stat actor: {}", args[0]);
         };
         match stat_name.as_deref() {
@@ -4206,6 +5398,78 @@ impl SimulationState {
         }
     }
 
+    fn change_character_stat(
+        &mut self,
+        character: Character,
+        stat_name: &str,
+        amount: &str,
+    ) -> String {
+        let Some(stat) = ActorStat::from_name(stat_name) else {
+            return format!(
+                "Error: stat can only be one of these values: {}",
+                stat_values()
+            );
+        };
+        let actor_id = ActorId::Character(character);
+        let Some(current) = self.actor(actor_id).map(|actor| stat.value(actor)) else {
+            return format!("Error: unknown stat actor: {}", character.input_name());
+        };
+        let Ok(target) = parse_amount(amount, current, "amount") else {
+            return "Error: amount must be an integer".to_string();
+        };
+
+        if self.bonus_aeon_stats.contains_key(&character) {
+            let old_bonus = self
+                .bonus_aeon_stats
+                .get(&character)
+                .map(|stats| stat.bonus_value(*stats))
+                .unwrap_or_default();
+            let base = current - old_bonus;
+            stat.set_bonus(
+                self.bonus_aeon_stats.entry(character).or_default(),
+                (target - base).max(0),
+            );
+            let new_bonus = self
+                .bonus_aeon_stats
+                .get(&character)
+                .map(|stats| stat.bonus_value(*stats))
+                .unwrap_or_default();
+            let Some(actor) = self.actor_mut(actor_id) else {
+                return format!("Error: unknown stat actor: {}", character.input_name());
+            };
+            stat.set_value(actor, base + new_bonus);
+            return format_stat_change(actor, stat.display_name(), current, stat.value(actor));
+        }
+
+        let Some(actor) = self.actor_mut(actor_id) else {
+            return format!("Error: unknown stat actor: {}", character.input_name());
+        };
+        stat.set_value(actor, target);
+        let output = format_stat_change(actor, stat.display_name(), current, stat.value(actor));
+        if character == Character::Yuna {
+            self.calculate_aeon_stats();
+        }
+        output
+    }
+
+    fn render_stat_command(&mut self, args: &[String]) -> String {
+        let output = self.change_stat(args);
+        if !self.echo_state_edits || output.starts_with("Error:") || args.len() < 2 {
+            output
+        } else {
+            format!("stat {}", args.join(" "))
+        }
+    }
+
+    fn render_status_command(&mut self, args: &[String]) -> String {
+        let output = self.change_status(args);
+        if self.echo_state_edits && !output.starts_with("Error:") {
+            format!("status {}\n# {output}", args.join(" "))
+        } else {
+            output
+        }
+    }
+
     fn change_status(&mut self, args: &[String]) -> String {
         let Some(actor_id) = args
             .first()
@@ -4243,7 +5507,6 @@ impl SimulationState {
             }
         }
         let Some(actor) = self.actor_mut(actor_id) else {
-            self.unsupported_count += 1;
             return format!("Error: unknown status actor: {}", args[0]);
         };
         if let Some(status) = status {
@@ -4279,6 +5542,17 @@ impl SimulationState {
             Self::heal_actor_by(actor, amount);
         }
         format!("Heal: every Character healed by {amount} HP and MP")
+    }
+
+    fn render_heal_command(&mut self, args: &[String]) -> String {
+        let output = self.heal_party(args);
+        if output.starts_with("Error:") {
+            output
+        } else if args.is_empty() {
+            "heal".to_string()
+        } else {
+            format!("heal {}", args.join(" "))
+        }
     }
 
     fn change_ap(&mut self, args: &[String]) -> String {
@@ -4548,7 +5822,7 @@ impl SimulationState {
                 .copied()
                 .map(|target| vec![target])
                 .unwrap_or_else(|| vec![ActorId::Character(Character::Unknown)]),
-            ActionTarget::Counter => self.last_actor.into_iter().collect(),
+            ActionTarget::Counter => with_unknown_if_empty(self.last_actor.into_iter().collect()),
             ActionTarget::Character(character) => {
                 let target = ActorId::Character(character);
                 let target_is_valid = if matches!(user, ActorId::Monster(_)) {
@@ -4663,7 +5937,8 @@ impl SimulationState {
             .map(ActorId::Character)
             .filter(|actor_id| {
                 self.actor(*actor_id).is_some_and(|actor| {
-                    (action.can_target_dead || !actor.statuses.contains(&Status::Death))
+                    (action.can_target_dead
+                        || (actor.current_hp > 0 && !actor.statuses.contains(&Status::Death)))
                         && !actor.statuses.contains(&Status::Eject)
                 })
             })
@@ -4688,7 +5963,10 @@ impl SimulationState {
     fn possible_monster_targets(&self, action: &ActionData) -> Vec<ActorId> {
         self.monsters
             .iter()
-            .filter(|actor| action.can_target_dead || !actor.statuses.contains(&Status::Death))
+            .filter(|actor| {
+                action.can_target_dead
+                    || (actor.current_hp > 0 && !actor.statuses.contains(&Status::Death))
+            })
             .map(|actor| actor.id)
             .collect()
     }
@@ -4833,6 +6111,12 @@ impl SimulationState {
             .and_then(|actor| actor.status_resistances.get(&application.status))
             .copied()
             .unwrap_or(0);
+        let status_rng = if status_uses_rng(application.status) {
+            let rng_index = self.status_rng_index(user);
+            (self.rng.advance_rng(rng_index) % 101) as i32
+        } else {
+            0
+        };
         let applied = if application.ignores_resistance || application.chance == 255 {
             true
         } else if resistance == 255 {
@@ -4840,12 +6124,6 @@ impl SimulationState {
         } else if application.chance == 254 {
             true
         } else {
-            let status_rng = if status_uses_rng(application.status) {
-                let rng_index = self.status_rng_index(user);
-                (self.rng.advance_rng(rng_index) % 101) as i32
-            } else {
-                0
-            };
             (application.chance as i32 - resistance as i32) > status_rng
         };
         if applied {
@@ -5011,7 +6289,8 @@ impl SimulationState {
                 if actor.has_auto_ability(AutoAbility::AutoRegen) {
                     let regen_healing =
                         ctb_since_last_action * actor.effective_max_hp().max(0) / 256 + 100;
-                    actor.current_hp = (actor.current_hp + regen_healing).max(0);
+                    actor.current_hp =
+                        (actor.current_hp + regen_healing).clamp(0, actor.effective_max_hp());
                 }
             }
             return true;
@@ -5034,29 +6313,6 @@ impl SimulationState {
         }
         actor.add_buff(buff, amount);
         Some(buff_stacks(actor, buff))
-    }
-
-    fn apply_weapon_statuses(&mut self, user: ActorId, target: ActorId) -> Vec<(Status, bool)> {
-        let Some(actor) = self.actor(user) else {
-            return Vec::new();
-        };
-        let statuses = actor
-            .weapon_abilities
-            .iter()
-            .filter_map(|ability| weapon_status_application(*ability))
-            .collect::<Vec<_>>();
-        let mut results = Vec::new();
-        for application in statuses {
-            if self
-                .actor(target)
-                .is_some_and(|actor| actor.statuses.contains(&Status::Petrify))
-            {
-                return results;
-            }
-            let applied = self.apply_action_status_to_actor(user, target, &application);
-            results.push((application.status, applied));
-        }
-        results
     }
 
     fn apply_shatter_check(
@@ -5115,6 +6371,7 @@ impl SimulationState {
                     damage_rng,
                     crit,
                     od_time_remaining,
+                    DamagePool::Hp,
                 );
                 self.apply_hp_damage(target, damage);
                 if action.drains {
@@ -5143,6 +6400,7 @@ impl SimulationState {
                     damage_rng,
                     crit,
                     od_time_remaining,
+                    DamagePool::Mp,
                 );
                 damage = if damage > 0 {
                     damage.min(target_actor.current_mp)
@@ -5167,23 +6425,36 @@ impl SimulationState {
             };
             let damage_rng = self.rng.advance_rng(damage_rng_index(user)) & 31;
             let crit = self.action_crits(user, &target_actor, action);
-            let mut damage = 0;
-            if !target_actor.statuses.contains(&Status::Petrify) {
-                damage = calculate_action_damage(
+            let (damage, displayed_damage) = if target_actor.statuses.contains(&Status::Petrify) {
+                (0, 0)
+            } else {
+                let mut damage = calculate_action_damage(
                     user,
                     &target_actor,
                     action,
                     damage_rng,
                     crit,
                     od_time_remaining,
+                    DamagePool::Hp,
                 );
+                if damage < 0 {
+                    damage = damage.max(-target_actor.ctb);
+                }
+                let displayed_damage = if target == user.id && damage < 0 {
+                    0
+                } else {
+                    damage
+                };
+                (damage, displayed_damage)
+            };
+            if !target_actor.statuses.contains(&Status::Petrify) {
                 if let Some(actor) = self.actor_mut(target) {
                     actor.ctb += damage;
                 }
             }
             results.ctb = Some(ActionDamageResult {
                 damage_rng,
-                damage,
+                damage: displayed_damage,
                 pool: "CTB",
                 crit,
             });
@@ -5237,14 +6508,14 @@ impl SimulationState {
         let Some(actor) = self.actor_mut(target) else {
             return;
         };
-        actor.current_hp = (actor.current_hp + damage).max(0);
+        actor.current_hp = (actor.current_hp + damage).clamp(0, actor.effective_max_hp().max(0));
     }
 
     fn apply_drain_mp_recovery(&mut self, target: ActorId, damage: i32) {
         let Some(actor) = self.actor_mut(target) else {
             return;
         };
-        actor.current_mp = (actor.current_mp + damage).max(0);
+        actor.current_mp = (actor.current_mp + damage).clamp(0, actor.effective_max_mp().max(0));
     }
 
     fn heal_actor(&mut self, target: ActorId) {
@@ -5413,7 +6684,7 @@ impl SimulationState {
         }
         let party = self.party.clone();
         for actor in &mut self.character_actors {
-            if (party.contains(&character_id(actor)) || actor.ctb > 0)
+            if party.contains(&character_id(actor))
                 && !matches!(actor.id, ActorId::Character(Character::Unknown))
                 && !actor.statuses.contains(&Status::Petrify)
             {
@@ -5434,7 +6705,7 @@ impl SimulationState {
         }
         let party = self.party.clone();
         for actor in &mut self.character_actors {
-            if (party.contains(&character_id(actor)) || actor.ctb > 0)
+            if party.contains(&character_id(actor))
                 && !matches!(actor.id, ActorId::Character(Character::Unknown))
                 && !actor.statuses.contains(&Status::Petrify)
             {
@@ -5540,6 +6811,11 @@ impl SimulationState {
     }
 
     fn resolve_existing_actor_id(&self, value: &str) -> Option<ActorId> {
+        if !value.ends_with("_c") {
+            if let Some(slot) = self.resolve_existing_monster_target_arg(value) {
+                return Some(ActorId::Monster(slot));
+            }
+        }
         if let Some(character) = self.resolve_character_target_arg(value) {
             return Some(ActorId::Character(character));
         }
@@ -5560,6 +6836,7 @@ impl SimulationState {
             return self.actor(ActorId::Monster(slot)).map(|_| slot);
         }
         self.resolve_monster_target_arg(value)
+            .or_else(|| self.resolve_existing_monster_slot_by_name(value))
     }
 
     fn empty_monster_slot_error(&self, value: &str) -> Option<String> {
@@ -5578,17 +6855,35 @@ impl SimulationState {
             .iter()
             .chain(self.temporary_monsters.iter().rev())
             .filter(|actor| actor.is_alive())
-            .find(|actor| {
+            .filter(|actor| {
                 actor
                     .monster_key
                     .as_deref()
                     .is_some_and(|key| key == value || monster_family(key) == value_family)
             })
+            .next()
             .map(|actor| actor.id)
             .and_then(|actor_id| match actor_id {
                 ActorId::Monster(slot) => Some(slot),
                 ActorId::Character(_) => None,
             })
+    }
+
+    fn resolve_existing_monster_slot_by_name(&self, value: &str) -> Option<MonsterSlot> {
+        let value_family = monster_family(value);
+        self.monsters
+            .iter()
+            .filter(|actor| {
+                actor
+                    .monster_key
+                    .as_deref()
+                    .is_some_and(|key| key == value || monster_family(key) == value_family)
+            })
+            .filter_map(|actor| match actor.id {
+                ActorId::Monster(slot) => Some(slot),
+                ActorId::Character(_) => None,
+            })
+            .next()
     }
 
     fn actor_mut(&mut self, actor_id: ActorId) -> Option<&mut BattleActor> {
@@ -5621,7 +6916,7 @@ impl SimulationState {
             return;
         }
         for actor in &mut self.character_actors {
-            if (self.party.contains(&character_id(actor)) || actor.ctb > 0)
+            if self.party.contains(&character_id(actor))
                 && !matches!(actor.id, ActorId::Character(Character::Unknown))
             {
                 actor.ctb -= min_ctb;
@@ -5636,18 +6931,19 @@ impl SimulationState {
         BattleState::new(self.current_party_actors(), self.monsters.clone())
     }
 
-    fn available_battle_state(&self) -> BattleState {
-        BattleState::new(
-            self.current_party_actors()
-                .into_iter()
-                .filter(|actor| actor.can_take_turn())
-                .collect(),
-            self.monsters
-                .iter()
-                .filter(|actor| actor.can_take_turn())
-                .cloned()
-                .collect(),
-        )
+    fn available_ctb_string(&self) -> String {
+        let party = self
+            .current_party_actors()
+            .into_iter()
+            .filter(|actor| actor.can_take_turn())
+            .collect::<Vec<_>>();
+        let monsters = self
+            .monsters
+            .iter()
+            .filter(|actor| actor.can_take_turn())
+            .cloned()
+            .collect::<Vec<_>>();
+        BattleState::new(party, monsters).ctb_order_string()
     }
 
     fn current_party_actors(&self) -> Vec<BattleActor> {
@@ -5673,10 +6969,54 @@ impl SimulationState {
 }
 
 fn ensure_blank_line(lines: &mut Vec<String>) {
-    if lines.last().is_some_and(|line| line.is_empty()) {
+    if lines.is_empty() || lines.last().is_some_and(|line| line.is_empty()) {
         return;
     }
     lines.push(String::new());
+}
+
+fn append_rendered_lines(rendered: &mut Vec<String>, rendered_line: &str) {
+    for line in rendered_line.split('\n') {
+        if line.trim_start().starts_with("encounter ") {
+            ensure_blank_line(rendered);
+        }
+        if let Some(current_side) = output_block_side(line) {
+            if let Some(previous_side) = last_output_block_side(rendered) {
+                if current_side != previous_side {
+                    ensure_blank_line(rendered);
+                }
+            }
+        }
+        rendered.push(line.to_string());
+    }
+}
+
+fn last_output_block_side(lines: &[String]) -> Option<OutputBlockSide> {
+    lines.iter().rev().find_map(|line| output_block_side(line))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputBlockSide {
+    Party,
+    Enemy,
+}
+
+fn output_block_side(line: &str) -> Option<OutputBlockSide> {
+    let stripped = line.trim();
+    if stripped.is_empty() || stripped.starts_with('#') {
+        return None;
+    }
+    let token = stripped.split_whitespace().next()?;
+    if token == "spawn" {
+        return Some(OutputBlockSide::Enemy);
+    }
+    if token.parse::<Character>().is_ok() {
+        return Some(OutputBlockSide::Party);
+    }
+    if token.parse::<MonsterSlot>().is_ok() || data::monster_stats(token).is_some() {
+        return Some(OutputBlockSide::Enemy);
+    }
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -5984,10 +7324,11 @@ fn expand_targets_for_hits(targets: Vec<ActorId>, n_of_hits: i32) -> Vec<ActorId
     if n_of_hits <= 1 {
         return targets;
     }
-    targets
-        .into_iter()
-        .flat_map(|target| std::iter::repeat_n(target, n_of_hits))
-        .collect()
+    let mut expanded = Vec::with_capacity(targets.len() * n_of_hits);
+    for _ in 0..n_of_hits {
+        expanded.extend(targets.iter().copied());
+    }
+    expanded
 }
 
 fn effective_target_hits(action: &ActionData, args: &[String]) -> i32 {
@@ -6070,6 +7411,23 @@ fn format_condition(condition: EncounterCondition) -> &'static str {
         EncounterCondition::Normal => "Normal",
         EncounterCondition::Ambush => "Ambush",
     }
+}
+
+fn action_target_accepts_explicit_monster(target: &ActionTarget) -> bool {
+    !matches!(
+        target,
+        ActionTarget::SelfTarget
+            | ActionTarget::SingleCharacter
+            | ActionTarget::CounterSingleCharacter
+            | ActionTarget::Character(_)
+            | ActionTarget::CounterSelf
+            | ActionTarget::CounterCharactersParty
+            | ActionTarget::CounterRandomCharacter
+            | ActionTarget::CounterAll
+            | ActionTarget::CounterLastTarget
+            | ActionTarget::Counter
+            | ActionTarget::None
+    )
 }
 
 fn default_character_actors() -> Vec<BattleActor> {
@@ -6238,7 +7596,7 @@ struct MonsterTemplate {
 }
 
 fn monster_template(name: &str) -> MonsterTemplate {
-    data::monster_stats(name)
+    let template = data::monster_stats(name)
         .map(|stats| MonsterTemplate {
             key: stats.key,
             display_name: stats.display_name,
@@ -6285,7 +7643,8 @@ fn monster_template(name: &str) -> MonsterTemplate {
             immune_to_life: false,
             immune_to_bribe: false,
             auto_statuses: Vec::new(),
-        })
+        });
+    template
 }
 
 fn create_monster_actor(monster_name: &str, slot: MonsterSlot) -> Option<BattleActor> {
@@ -6335,6 +7694,67 @@ fn fallback_action_rank(action: &str) -> i32 {
     })
 }
 
+fn infer_encounter_parties(lines: &[String]) -> HashMap<usize, Vec<Character>> {
+    let mut encounter_parties = HashMap::new();
+    let mut current_encounter_index = None;
+    let mut current_party = Vec::new();
+
+    for (index, raw_line) in lines.iter().enumerate() {
+        if raw_line.starts_with('#') {
+            continue;
+        }
+        match parse_raw_action_line(raw_line) {
+            ParsedCommand::Encounter { .. } => {
+                if let Some(encounter_index) = current_encounter_index {
+                    if !current_party.is_empty() {
+                        encounter_parties.insert(encounter_index, current_party.clone());
+                    }
+                }
+                current_encounter_index = Some(index);
+                current_party.clear();
+            }
+            ParsedCommand::CharacterAction { actor, .. } => {
+                if !current_party.contains(&actor) {
+                    current_party.push(actor);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(encounter_index) = current_encounter_index {
+        if !current_party.is_empty() {
+            encounter_parties.insert(encounter_index, current_party);
+        }
+    }
+
+    encounter_parties
+}
+
+fn infer_encounter_party_swaps(lines: &[String]) -> HashSet<usize> {
+    let mut encounter_party_swaps = HashSet::new();
+    let mut current_encounter_index = None;
+
+    for (index, raw_line) in lines.iter().enumerate() {
+        if raw_line.trim_start().starts_with('#') {
+            continue;
+        }
+        match parse_raw_action_line(raw_line) {
+            ParsedCommand::Encounter { .. } => {
+                current_encounter_index = Some(index);
+            }
+            ParsedCommand::Party { initials } if !initials.is_empty() => {
+                if let Some(encounter_index) = current_encounter_index {
+                    encounter_party_swaps.insert(encounter_index);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    encounter_party_swaps
+}
+
 fn action_is_counter(action: &ActionData) -> bool {
     matches!(
         action.target,
@@ -6355,6 +7775,7 @@ fn calculate_action_damage(
     damage_rng: u32,
     crit: bool,
     od_time_remaining: i32,
+    pool: DamagePool,
 ) -> i32 {
     if target.immune_to_damage {
         return 0;
@@ -6377,6 +7798,8 @@ fn calculate_action_damage(
         DamageFormula::PercentageTotal => {
             if target.immune_to_percentage_damage {
                 0
+            } else if pool == DamagePool::Mp {
+                target.effective_max_mp() * base_damage / 16
             } else {
                 target.effective_max_hp() * base_damage / 16
             }
@@ -6384,6 +7807,8 @@ fn calculate_action_damage(
         DamageFormula::PercentageCurrent => {
             if target.immune_to_percentage_damage {
                 0
+            } else if pool == DamagePool::Mp {
+                target.current_mp * base_damage / 16
             } else {
                 target.current_hp * base_damage / 16
             }
@@ -6799,12 +8224,19 @@ fn parse_summon_party(name: &str) -> Option<Vec<Character>> {
     .map(|aeon| vec![aeon])
 }
 
-fn actor_is_magus_sister(actor: &BattleActor) -> bool {
+fn is_aeon_character(character: Character) -> bool {
     matches!(
-        actor.id,
-        ActorId::Character(Character::Cindy)
-            | ActorId::Character(Character::Sandy)
-            | ActorId::Character(Character::Mindy)
+        character,
+        Character::Valefor
+            | Character::Ifrit
+            | Character::Ixion
+            | Character::Shiva
+            | Character::Bahamut
+            | Character::Anima
+            | Character::Yojimbo
+            | Character::Cindy
+            | Character::Sandy
+            | Character::Mindy
     )
 }
 
@@ -6839,6 +8271,39 @@ fn parse_equipment_abilities(args: &[String]) -> Result<ParsedEquipmentAbilities
             continue;
         }
         if let Ok(ability) = ability_name.parse::<AutoAbility>() {
+            modeled.insert(ability);
+        }
+        display_names.push(canonical.to_string());
+    }
+    Ok(ParsedEquipmentAbilities {
+        modeled,
+        display_names,
+    })
+}
+
+fn parse_inventory_equipment_abilities(
+    ability_args: &[String],
+) -> Result<ParsedEquipmentAbilities, String> {
+    let mut accepted = HashSet::new();
+    let mut modeled = HashSet::new();
+    let mut display_names = Vec::new();
+    for ability_name in ability_args {
+        if accepted.len() >= 4 {
+            break;
+        }
+        let Some(canonical) = data::autoability_names_in_order()
+            .into_iter()
+            .find(|ability| python_enum_value(ability) == *ability_name)
+        else {
+            return Err(format!(
+                "Error: ability can only be one of these values: {}",
+                autoability_values()
+            ));
+        };
+        if !accepted.insert(equipment_ability_key(canonical)) {
+            continue;
+        }
+        if let Ok(ability) = canonical.parse::<AutoAbility>() {
             modeled.insert(ability);
         }
         display_names.push(canonical.to_string());
@@ -7988,6 +9453,37 @@ fn parse_amount(amount: &str, current: i32, error_name: &str) -> Result<i32, Str
     }
 }
 
+fn aeon_power_base(stats: AeonStatBlock) -> i32 {
+    (stats.hp.min(9_999) / 100)
+        + (stats.mp.min(999) / 10)
+        + stats.strength
+        + stats.defense
+        + stats.magic
+        + stats.magic_defense
+        + stats.agility
+        + stats.evasion
+        + stats.accuracy
+}
+
+fn aeon_formula_value(stat: i32, power_base: i32, formula: (i32, i32, i32)) -> i32 {
+    let (percent, numerator, denominator) = formula;
+    (stat * percent / 100) + (power_base * numerator / denominator)
+}
+
+fn aeon_calculated_stat(
+    yuna_stat: i32,
+    encounter_stat: i32,
+    yuna_power: i32,
+    encounter_power: i32,
+    formula: (i32, i32, i32),
+    bonus: i32,
+) -> i32 {
+    aeon_formula_value(yuna_stat, yuna_power, formula)
+        .max(aeon_formula_value(encounter_stat, encounter_power, formula))
+        .saturating_add(bonus)
+        .clamp(0, 255)
+}
+
 fn parse_bribe_action_gil(args: &[String]) -> Result<i32, String> {
     let gil = parse_amount(
         args.get(1).map(String::as_str).unwrap_or_default(),
@@ -8024,6 +9520,105 @@ fn parse_sahagin_chief_spawn_comment(line: &str) -> Option<(usize, bool)> {
         return None;
     }
     Some((spawn_count, lower.contains("4th appears")))
+}
+
+#[derive(Debug, Default)]
+struct GeneratedEncounterCtb {
+    monsters: HashMap<MonsterSlot, i32>,
+    characters: HashMap<Character, i32>,
+}
+
+fn parse_generated_encounter_comment_party(
+    line: &str,
+) -> Option<(Vec<String>, GeneratedEncounterCtb)> {
+    let comment = line.trim().strip_prefix('#')?.trim();
+    if !comment.starts_with("Encounter:")
+        && !comment.starts_with("Random Encounter:")
+        && !comment.starts_with("Multizone encounter:")
+        && !comment.starts_with("Simulated Encounter:")
+    {
+        return None;
+    }
+    let parts = comment.split('|').map(str::trim).collect::<Vec<_>>();
+    let formation = parts.get(2)?;
+    let ctb = parts.get(3).copied().unwrap_or_default();
+    let monster_keys = parse_generated_encounter_monsters(formation)?;
+    Some((monster_keys, parse_generated_encounter_ctbs(ctb)))
+}
+
+fn parse_generated_encounter_monsters(formation: &str) -> Option<Vec<String>> {
+    let mut stripped = formation.trim();
+    for suffix in [" Ambush", " Preemptive", " Normal"] {
+        if let Some(without_suffix) = stripped.strip_suffix(suffix) {
+            stripped = without_suffix;
+            break;
+        }
+    }
+    if stripped.is_empty() || stripped == "Empty" || stripped == "-" {
+        return None;
+    }
+    let mut monsters = Vec::new();
+    for name in stripped
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        let normalized = name
+            .to_ascii_lowercase()
+            .replace(' ', "_")
+            .replace('#', "_")
+            .replace(['(', ')', '\''], "");
+        let monster = data::monster_stats(name).or_else(|| data::monster_stats(&normalized))?;
+        monsters.push(monster.key);
+    }
+    (!monsters.is_empty()).then_some(monsters)
+}
+
+fn parse_generated_encounter_ctbs(ctb_summary: &str) -> GeneratedEncounterCtb {
+    let mut ctbs = GeneratedEncounterCtb::default();
+    for token in ctb_summary.split_whitespace() {
+        let Some((actor_text, rest)) = token.split_once('[') else {
+            continue;
+        };
+        let Some(ctb_text) = rest.strip_suffix(']') else {
+            continue;
+        };
+        let Ok(ctb) = ctb_text.parse::<i32>() else {
+            continue;
+        };
+        if let Some(slot_text) = actor_text.strip_prefix('M') {
+            if let Ok(slot) = slot_text.parse::<usize>() {
+                ctbs.monsters.insert(MonsterSlot(slot), ctb);
+            }
+        } else if let Some(character) = character_from_ctb_prefix(actor_text) {
+            ctbs.characters.insert(character, ctb);
+        }
+    }
+    ctbs
+}
+
+fn character_from_ctb_prefix(prefix: &str) -> Option<Character> {
+    Some(match prefix {
+        "Ti" => Character::Tidus,
+        "Yu" => Character::Yuna,
+        "Au" => Character::Auron,
+        "Ki" => Character::Kimahri,
+        "Wa" => Character::Wakka,
+        "Lu" => Character::Lulu,
+        "Ri" => Character::Rikku,
+        "Se" => Character::Seymour,
+        "Va" => Character::Valefor,
+        "If" => Character::Ifrit,
+        "Ix" => Character::Ixion,
+        "Sh" => Character::Shiva,
+        "Ba" => Character::Bahamut,
+        "An" => Character::Anima,
+        "Yo" => Character::Yojimbo,
+        "Ci" => Character::Cindy,
+        "Sa" => Character::Sandy,
+        "Mi" => Character::Mindy,
+        _ => return None,
+    })
 }
 
 fn skipped_action_comment(display_line: &str, actor: &BattleActor) -> String {
@@ -8263,6 +9858,40 @@ fn render_character_action_outcome(outcome: CharacterActionOutcome) -> String {
     output_lines.join("\n")
 }
 
+fn first_monster_slot_in_comment(comment: &str) -> Option<MonsterSlot> {
+    let start = comment.find("(M")? + 2;
+    let digits = comment[start..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect::<String>();
+    format!("m{digits}").parse::<MonsterSlot>().ok()
+}
+
+fn replace_character_action_target(line: &str, slot: MonsterSlot) -> String {
+    let edited_line = edit_action_line(line);
+    let mut words: Vec<String> = edited_line
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect();
+    if words.len() >= 4 && words[0].eq_ignore_ascii_case("action") {
+        words[3] = format!("m{}", slot.0);
+    }
+    words.join(" ")
+}
+
+fn rendered_virtual_monster_turn_count(rendered: &str) -> usize {
+    rendered
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            trimmed
+                .strip_prefix('m')
+                .and_then(|tail| tail.chars().next())
+                .is_some_and(|character| character.is_ascii_digit())
+        })
+        .count()
+}
+
 fn format_damage_comment(
     prefix: &str,
     results: &[ActionEffectResult],
@@ -8396,6 +10025,13 @@ fn format_status(actor: &BattleActor) -> String {
     status
 }
 
+fn titlecase_encounter_header(name: &str) -> String {
+    name.split_whitespace()
+        .map(titlecase_ascii_word)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn display_action_name(action: &str) -> String {
     action
         .split('_')
@@ -8431,11 +10067,12 @@ fn titlecase_ascii_word(word: &str) -> String {
 mod tests {
     use super::{
         actor_sort_index, calculate_action_damage, monster_template, simulate, ActionDamageResult,
-        ActionEffectResult, SimulationState,
+        ActionEffectResult, DamagePool, SimulationState,
     };
     use crate::battle::{ActorId, BattleActor};
     use crate::data::{
-        ActionData, ActionStatus, ActionTarget, DamageFormula, DamageType, HitChanceFormula,
+        action_data, ActionData, ActionStatus, ActionTarget, DamageFormula, DamageType,
+        HitChanceFormula,
     };
     use crate::model::{
         AutoAbility, Buff, Character, Element, ElementalAffinity, MonsterSlot, Status,
@@ -8585,7 +10222,7 @@ mod tests {
                 "Error: Slot must be an integer\n",
                 "Error: Slot must be between 1 and 1\n",
                 "Error: Slot must be between 1 and 1\n",
-                "Spawn: Tanker (M1) with 84 CTB\n",
+                "spawn tanker 1\n",
                 "Error: Slot must be between 1 and 2",
             )
         );
@@ -8636,6 +10273,30 @@ mod tests {
                 .weapon_slots,
             1
         );
+    }
+
+    #[test]
+    fn unknown_actor_state_commands_render_like_python() {
+        let output = simulate(
+            1,
+            &[
+                "equip weapon unknown 1 sensor".to_string(),
+                "status unknown haste".to_string(),
+                "stat unknown hp 1".to_string(),
+                "status unknown".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            concat!(
+                "Equipment: Unknown | Weapon | Unknown's weapon [] -> Unknown's weapon [Sensor]\n",
+                "Status: Unknown 99999/99999 HP | Statuses: Haste (254)\n",
+                "Stat: Unknown | HP | 99999 -> 1\n",
+                "Status: Unknown 1/1 HP | Statuses: Haste (254)",
+            )
+        );
+        assert_eq!(output.unsupported_count, 0);
     }
 
     #[test]
@@ -8879,7 +10540,7 @@ mod tests {
         assert!(output
             .text
             .contains("Party: Tidus, Auron -> Cindy, Sandy, Mindy"));
-        assert!(output.text.contains("Spawn: Piranha (M1) with 0 CTB"));
+        assert!(output.text.contains("spawn piranha 1 0"));
         assert!(
             output.text.contains("Cindy -> Fight! [53/100] -> Attack"),
             "{}",
@@ -9867,6 +11528,19 @@ mod tests {
     }
 
     #[test]
+    fn magus_action_availability_ignores_mp_cost_abilities_like_python() {
+        let mut state = SimulationState::new(1);
+        let flare = action_data("flare").expect("flare action should exist");
+        let mindy = state
+            .actor_mut(ActorId::Character(Character::Mindy))
+            .expect("Mindy actor should exist");
+        mindy.current_mp = flare.mp_cost - 1;
+        mindy.armor_abilities.insert(AutoAbility::HalfMpCost);
+
+        assert!(!state.magus_can_attempt_action(Character::Mindy, "flare"));
+    }
+
+    #[test]
     fn end_encounter_revives_dead_characters_to_one_hp_like_python() {
         let mut state = SimulationState::new(1);
         let tidus = state
@@ -9951,6 +11625,162 @@ mod tests {
             .text
             .contains("Error: Usage: encounters_count [total/random/zone name] [(+/-)amount]"));
         assert!(output.text.contains("Encounter:   6 | Tanker"));
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn encounters_count_total_recalculates_aeon_stats_like_python() {
+        let output = simulate(
+            1,
+            &[
+                "stat valefor".to_string(),
+                "stat valefor strength 30".to_string(),
+                "encounters_count total 600".to_string(),
+                "stat valefor".to_string(),
+                "stat yuna magic +10".to_string(),
+                "stat valefor".to_string(),
+                "stat valefor hp 3000".to_string(),
+                "stat valefor".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            concat!(
+                "Stats: Valefor | HP 725 | MP 24 | STR 18 | DEF 23 | MAG 21 | MDF 23 | AGI 10 | LCK 17 | EVA 19 | ACC 11\n",
+                "Stat: Valefor | Strength | 18 -> 30\n",
+                "Total encounters count set to 600\n",
+                "Stats: Valefor | HP 2225 | MP 71 | STR 57 | DEF 66 | MAG 64 | MDF 69 | AGI 34 | LCK 17 | EVA 42 | ACC 20\n",
+                "Stat: Yuna | Magic | 20 -> 30\n",
+                "Stats: Valefor | HP 2225 | MP 71 | STR 57 | DEF 66 | MAG 64 | MDF 69 | AGI 34 | LCK 17 | EVA 42 | ACC 20\n",
+                "Stat: Valefor | HP | 2225 -> 3000\n",
+                "Stats: Valefor | HP 3000 | MP 71 | STR 57 | DEF 66 | MAG 64 | MDF 69 | AGI 34 | LCK 17 | EVA 42 | ACC 20",
+            )
+        );
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn seymour_and_summon_aeons_keep_python_current_resources() {
+        let output = simulate(
+            1,
+            &[
+                "status seymour".to_string(),
+                "stat seymour".to_string(),
+                "status valefor".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            concat!(
+                "Status: Seymour 1200/1200 HP\n",
+                "Stats: Seymour | HP 1200 | MP 999 | STR 20 | DEF 25 | MAG 35 | MDF 100 | AGI 20 | LCK 17 | EVA 10 | ACC 10\n",
+                "Status: Valefor 725/725 HP",
+            )
+        );
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn seymour_direct_stats_keep_python_bonus_floor_behavior() {
+        let output = simulate(
+            1,
+            &[
+                "stat seymour hp 1".to_string(),
+                "stat seymour hp 1500".to_string(),
+                "stat seymour".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            concat!(
+                "Stat: Seymour | HP | 1200 -> 1200\n",
+                "Stat: Seymour | HP | 1200 -> 1500\n",
+                "Stats: Seymour | HP 1500 | MP 999 | STR 20 | DEF 25 | MAG 35 | MDF 100 | AGI 20 | LCK 17 | EVA 10 | ACC 10",
+            )
+        );
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn summon_aeon_formula_constants_match_python_after_encounter_tiers() {
+        let output = simulate(
+            1,
+            &[
+                "encounters_count total 600".to_string(),
+                "stat valefor".to_string(),
+                "stat ifrit".to_string(),
+                "stat ixion".to_string(),
+                "stat shiva".to_string(),
+                "stat bahamut".to_string(),
+                "stat anima".to_string(),
+                "stat yojimbo".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            concat!(
+                "Total encounters count set to 600\n",
+                "Stats: Valefor | HP 2225 | MP 71 | STR 45 | DEF 66 | MAG 64 | MDF 69 | AGI 34 | LCK 17 | EVA 42 | ACC 20\n",
+                "Stats: Ifrit | HP 3067 | MP 68 | STR 46 | DEF 84 | MAG 62 | MDF 62 | AGI 30 | LCK 17 | EVA 22 | ACC 20\n",
+                "Stats: Ixion | HP 3021 | MP 74 | STR 47 | DEF 74 | MAG 61 | MDF 87 | AGI 26 | LCK 17 | EVA 24 | ACC 21\n",
+                "Stats: Shiva | HP 2680 | MP 80 | STR 42 | DEF 48 | MAG 70 | MDF 71 | AGI 52 | LCK 17 | EVA 66 | ACC 20\n",
+                "Stats: Bahamut | HP 4340 | MP 103 | STR 50 | DEF 79 | MAG 55 | MDF 84 | AGI 34 | LCK 17 | EVA 44 | ACC 20\n",
+                "Stats: Anima | HP 5090 | MP 130 | STR 65 | DEF 74 | MAG 66 | MDF 69 | AGI 30 | LCK 17 | EVA 44 | ACC 20\n",
+                "Stats: Yojimbo | HP 3064 | MP 0 | STR 61 | DEF 73 | MAG 48 | MDF 69 | AGI 30 | LCK 17 | EVA 122 | ACC 38",
+            )
+        );
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn yuna_hp_caps_before_aeon_stat_formula_like_python() {
+        let output = simulate(
+            1,
+            &[
+                "stat yuna hp 99999".to_string(),
+                "stat valefor".to_string(),
+                "stat yuna hp 20000".to_string(),
+                "stat valefor".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            concat!(
+                "Stat: Yuna | HP | 475 -> 99999\n",
+                "Stats: Valefor | HP 3199 | MP 43 | STR 31 | DEF 42 | MAG 22 | MDF 26 | AGI 15 | LCK 17 | EVA 23 | ACC 16\n",
+                "Stat: Yuna | HP | 99999 -> 20000\n",
+                "Stats: Valefor | HP 3199 | MP 43 | STR 31 | DEF 42 | MAG 22 | MDF 26 | AGI 15 | LCK 17 | EVA 23 | ACC 16",
+            )
+        );
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn end_encounter_keeps_aeon_current_hp_clamped_like_python() {
+        let output = simulate(
+            1,
+            &[
+                "status valefor".to_string(),
+                "endencounter".to_string(),
+                "status valefor".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            concat!(
+                "Status: Valefor 725/725 HP\n",
+                "End: CTBs: Ti[0] Au[0]\n",
+                "     Characters HPs: Characters at full HP\n",
+                "     Monsters HPs: Monsters at full HP\n",
+                "Status: Valefor 725/725 HP",
+            )
+        );
         assert_eq!(output.unsupported_count, 0);
     }
 
@@ -10068,6 +11898,50 @@ mod tests {
             .starts_with("Error: item can only be one of these values: potion, hi-potion"));
         assert!(output.text.contains("phoenix_down"));
         assert!(!output.text.contains("Phoenix Down"));
+    }
+
+    #[test]
+    fn inventory_equipment_abilities_use_python_tracker_spellings() {
+        let output = simulate(
+            1,
+            &[
+                "inventory get equipment armor tidus 1 auto-haste".to_string(),
+                "inventory get equipment armor tidus 1 auto_haste".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            format!(
+                "{}{}",
+                "Added Haste Shield (Tidus) [Auto-Haste][12512 gil]\n",
+                format!(
+                    "Error: ability can only be one of these values: {}",
+                    super::autoability_values()
+                )
+            )
+        );
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn inventory_equipment_duplicate_abilities_do_not_consume_slot_limit_like_python() {
+        let output = simulate(
+            1,
+            &[
+                "inventory get equipment weapon tidus 1 sensor sensor first_strike initiative piercing".to_string(),
+                "inventory get equipment weapon tidus 1 sensor first_strike initiative piercing nope".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            output.text,
+            concat!(
+                "Added Sonic Steel (Tidus) [Sensor, First Strike, Initiative, Piercing][15312 gil]\n",
+                "Added Sonic Steel (Tidus) [Sensor, First Strike, Initiative, Piercing][15312 gil]",
+            )
+        );
+        assert_eq!(output.unsupported_count, 0);
     }
 
     #[test]
@@ -10192,7 +12066,9 @@ mod tests {
             "tidus attack m1".to_string(),
         ];
         let output = simulate(1, &lines);
-        assert!(output.text.contains("Encounter:   1 | Tanker | Normal |"));
+        assert!(output
+            .text
+            .contains("Encounter:   1 | Tanker | Tanker, Sinscale#6"));
         assert!(output.text.contains("ATB:"));
         assert!(output.text.contains("tidus attack m1"));
         assert!(output.text.contains("# party rolls:"));
@@ -10200,7 +12076,7 @@ mod tests {
     }
 
     #[test]
-    fn encounter_icvs_preserve_normalized_reserve_ctbs_for_swaps() {
+    fn encounter_icvs_leave_reserves_at_zero_like_python() {
         let mut state = SimulationState::new(1);
         state.execute_raw_line("encounter tanker");
 
@@ -10209,7 +12085,7 @@ mod tests {
             .unwrap()
             .ctb;
 
-        assert!(wakka_ctb > 0, "reserve Wakka CTB was {wakka_ctb}");
+        assert_eq!(wakka_ctb, 0);
         state.execute_raw_line("party taw");
         assert_eq!(
             state
@@ -10223,9 +12099,43 @@ mod tests {
             .actor(ActorId::Character(Character::Wakka))
             .unwrap()
             .ctb;
-        assert!(
-            wakka_after_turn < wakka_ctb,
-            "reserve Wakka CTB did not tick down: {wakka_ctb} -> {wakka_after_turn}"
+        assert_eq!(wakka_after_turn, wakka_ctb);
+    }
+
+    #[test]
+    fn reserve_ctbs_do_not_tick_during_core_normalization_like_python() {
+        let mut state = SimulationState::new(1);
+        state.party = vec![Character::Tidus, Character::Auron];
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .ctb = 20;
+        state
+            .actor_mut(ActorId::Character(Character::Auron))
+            .unwrap()
+            .ctb = 30;
+        state
+            .actor_mut(ActorId::Character(Character::Wakka))
+            .unwrap()
+            .ctb = 10;
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            40,
+            false,
+            1_000,
+        ));
+        state.monsters[0].ctb = 40;
+
+        let elapsed = state.normalize_after_turn();
+
+        assert_eq!(elapsed, 20);
+        assert_eq!(
+            state
+                .actor(ActorId::Character(Character::Wakka))
+                .unwrap()
+                .ctb,
+            10
         );
     }
 
@@ -10244,9 +12154,15 @@ mod tests {
 
         assert_eq!(output.unsupported_count, 0);
         assert!(output.text.contains("Encounter:   1 | Boss |"));
-        assert!(output.text.contains("Encounter:   2 | Boss | Normal |"));
-        assert!(output.text.contains("Encounter:   3 | Boss | Preemptive |"));
-        assert!(output.text.contains("Encounter:   4 | Boss | Ambush |"));
+        assert!(output
+            .text
+            .contains("Encounter:   2 | Boss | Empty Normal |"));
+        assert!(output
+            .text
+            .contains("Encounter:   3 | Boss | Empty Preemptive |"));
+        assert!(output
+            .text
+            .contains("Encounter:   4 | Boss | Empty Ambush |"));
         assert!(output
             .text
             .contains("Simulated Encounter:   4 | Simulation |"));
@@ -10281,7 +12197,9 @@ mod tests {
         assert!(output
             .text
             .contains("Simulated Encounter:   0 | Simulation |"));
-        assert!(output.text.contains("Encounter:   1 | Boss | Normal |"));
+        assert!(output
+            .text
+            .contains("Encounter:   1 | Boss | Empty Normal |"));
         assert_eq!(output.unsupported_count, 0);
     }
 
@@ -10308,7 +12226,11 @@ mod tests {
 
         assert!(output
             .text
-            .starts_with("Random Encounter:   1   1   1 | Kilika Woods/Besaid Road |"));
+            .starts_with("encounter multizone kilika_woods besaid_road\n"));
+        assert!(output.text.contains("# ===== Besaid Road ====="));
+        assert!(output
+            .text
+            .contains("# Random Encounter:   1   1   1 | Kilika Woods/Besaid Road |"));
         assert!(output.text.matches(" | ").count() >= 4);
         assert_eq!(state.encounters_count, 1);
         assert_eq!(state.random_encounters_count, 1);
@@ -10340,9 +12262,7 @@ mod tests {
         assert!(output.text.contains("auron defend"));
         assert!(output.text.contains("m5 spines"));
         assert!(output.text.contains("# enemy rolls:"));
-        assert!(output
-            .text
-            .contains("Heal: every Character healed by 99999 HP and MP"));
+        assert!(output.text.contains("heal"));
         assert_eq!(output.unsupported_count, 0);
     }
 
@@ -10582,6 +12502,33 @@ mod tests {
     }
 
     #[test]
+    fn bribe_action_updates_turn_and_target_memory_like_python() {
+        let mut state = SimulationState::new(1);
+        state.spawn_monster("piranha", MonsterSlot(1), Some(0));
+
+        state.apply_character_action(
+            Character::Rikku,
+            "bribe",
+            &[String::from("m1"), String::from("100")],
+        );
+
+        assert_eq!(state.last_actor, Some(ActorId::Character(Character::Rikku)));
+        assert_eq!(state.last_targets, vec![ActorId::Monster(MonsterSlot(1))]);
+        assert_eq!(
+            state
+                .actor_last_targets
+                .get(&ActorId::Character(Character::Rikku)),
+            Some(&vec![ActorId::Monster(MonsterSlot(1))])
+        );
+        assert_eq!(
+            state
+                .actor_last_attackers
+                .get(&ActorId::Monster(MonsterSlot(1))),
+            Some(&ActorId::Character(Character::Rikku))
+        );
+    }
+
+    #[test]
     fn bribe_action_accumulates_and_clamps_gil_like_python() {
         let mut state = SimulationState::new(1);
         state.spawn_monster("piranha", MonsterSlot(1), Some(0));
@@ -10659,8 +12606,8 @@ mod tests {
         assert_eq!(
             output.text,
             concat!(
-                "Spawn: Piranha (M1) with 0 CTB\n",
-                "Spawn: Worker (M2) with 0 CTB\n",
+                "spawn piranha 1 0\n",
+                "spawn worker 2 0\n",
                 "Error: \"m10\" is not a valid actor\n",
                 "Error: \"m0\" is not a valid actor\n",
                 "Error: \"m9\" is not a valid actor\n",
@@ -10743,6 +12690,42 @@ mod tests {
         assert!(output.text.contains("m1 thunder tidus\n# enemy rolls:"));
         assert!(output.text.contains("gandarewa thunder\n# enemy rolls:"));
         assert!(!output.text.contains("Gandarewa (M1) -> Thunder ["));
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn rendered_invalid_monster_actions_echo_without_mutating_like_python() {
+        let output = simulate(
+            1,
+            &[
+                "spawn melusine 1 0".to_string(),
+                "stat tidus ctb 10".to_string(),
+                "m1 thundara".to_string(),
+                "status atb".to_string(),
+                "tidus defend".to_string(),
+            ],
+        );
+
+        assert!(
+            output.text.contains("\nm1 thundara\nstatus atb"),
+            "{}",
+            output.text
+        );
+        assert!(
+            output.text.contains("# ATB: Au[0] M1[0] Ti[10]"),
+            "{}",
+            output.text
+        );
+        assert!(
+            output.text.contains("m1 attack\n# enemy rolls:"),
+            "{}",
+            output.text
+        );
+        assert!(
+            !output.text.contains("Error: Available actions"),
+            "{}",
+            output.text
+        );
         assert_eq!(output.unsupported_count, 0);
     }
 
@@ -10973,10 +12956,10 @@ mod tests {
         assert_eq!(
             output.text,
             concat!(
-                "Heal: every Character healed by 99999 HP and MP\n",
-                "Heal: Tidus healed by 50 HP and MP\n",
+                "heal\n",
+                "heal tidus 50\n",
                 "Error: character can only be one of these values: tidus, yuna, auron, kimahri, wakka, lulu, rikku, seymour, valefor, ifrit, ixion, shiva, bahamut, anima, yojimbo, cindy, sandy, mindy, unknown\n",
-                "Heal: Tidus healed by 99999 HP and MP",
+                "heal tidus nope",
             )
         );
         assert_eq!(output.unsupported_count, 0);
@@ -11029,6 +13012,17 @@ mod tests {
     }
 
     #[test]
+    fn ap_command_clamps_negative_total_ap_like_python() {
+        let output = simulate(1, &["ap tidus -5".to_string()]);
+
+        assert_eq!(
+            output.text,
+            "Tidus: 0 S. Lv (0 AP Total, 5 for next level) (added -5 AP)"
+        );
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
     fn simulates_shallow_state_commands() {
         let lines = vec![
             "encounter tanker".to_string(),
@@ -11055,8 +13049,8 @@ mod tests {
         assert!(status_lines
             .iter()
             .any(|line| !line.contains("Statuses: Sleep")));
-        assert!(output.text.contains("Spawn: Sinscale#3 (M4) with 0 CTB"));
-        assert!(output.text.contains("tidus attack tanker"));
+        assert!(output.text.contains("spawn sinscale_3 4"));
+        assert!(output.text.contains("tidus attack m1"));
         assert!(output.text.contains("Party: Tidus, Auron -> Valefor"));
         assert!(output
             .text
@@ -11165,8 +13159,10 @@ mod tests {
         );
 
         let lines = output.text.lines().collect::<Vec<_>>();
-        assert_eq!(lines[1], "ATB: Au[0]");
-        assert_eq!(lines[3], "ATB: Ti[0] Au[0]");
+        assert_eq!(lines[1], "status atb");
+        assert_eq!(lines[2], "# ATB: Au[0]");
+        assert_eq!(lines[4], "status atb");
+        assert_eq!(lines[5], "# ATB: Ti[0] Au[0]");
     }
 
     #[test]
@@ -11293,7 +13289,7 @@ mod tests {
                 "Tidus's CTB changed to 5\n",
                 "Tidus's CTB changed to 10\n",
                 "Tidus's CTB changed to 0\n",
-                "Spawn: Piranha (M1) with 0 CTB\n",
+                "spawn piranha 1 0\n",
                 "Piranha (M1)'s CTB changed to 0\n",
                 "Piranha (M1)'s CTB changed to 7\n",
                 "Error: amount must be an integer",
@@ -11350,7 +13346,7 @@ mod tests {
             concat!(
                 "Stat: Tidus | HP | 520 -> 99999\n",
                 "Stat: Tidus | MP | 12 -> 9999\n",
-                "Spawn: Piranha (M1) with 0 CTB\n",
+                "spawn piranha 1 0\n",
                 "Stat: Piranha (M1) | HP | 50 -> 999999\n",
                 "Stat: Piranha (M1) | MP | 1 -> 999999\n",
                 "Stat: Piranha (M1) | Strength | 6 -> 255\n",
@@ -11376,7 +13372,7 @@ mod tests {
         assert_eq!(
             output.text,
             concat!(
-                "Spawn: Piranha (M1) with 0 CTB\n",
+                "spawn piranha 1 0\n",
                 "Status: Piranha (M1) 50/50 HP | Statuses: Haste (254)\n",
                 "Stat: Piranha (M1) | HP | 50 -> 0\n",
                 "Status: Piranha (M1) 0/0 HP | Statuses: Death (254)",
@@ -11400,7 +13396,7 @@ mod tests {
         assert_eq!(
             output.text,
             concat!(
-                "Spawn: Piranha (M1) with 0 CTB\n",
+                "spawn piranha 1 0\n",
                 "Status: Piranha (M1) 50/50 HP | Statuses: Death (254)\n",
                 "Stat: Piranha (M1) | HP | 50 -> 51\n",
                 "Status: Piranha (M1) 50/51 HP | Statuses: Death (254)",
@@ -11421,6 +13417,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(output.unsupported_count, 0, "{errors}");
+        assert!(errors.is_empty(), "{errors}");
         assert!(output.text.contains("Encounter:"));
     }
 
@@ -11436,6 +13433,23 @@ mod tests {
         let output = simulate(3096296922, &lines);
         assert_eq!(output.unsupported_count, 0, "{}", output.text);
         assert!(output.text.contains("/*\nparty yuna\n*/"));
+        assert!(output.text.contains("Ti["));
+        assert!(output.text.contains("Au["));
+        assert!(!output.text.contains("Yu["));
+    }
+
+    #[test]
+    fn render_ctb_preserves_indented_block_comment_lines_like_python_web_editor() {
+        let lines = vec![
+            "encounter tanker".to_string(),
+            "  /*".to_string(),
+            "party yuna".to_string(),
+            "  */".to_string(),
+            "status atb".to_string(),
+        ];
+        let output = simulate(3096296922, &lines);
+        assert_eq!(output.unsupported_count, 0, "{}", output.text);
+        assert!(output.text.contains("  /*\nparty yuna\n  */"));
         assert!(output.text.contains("Ti["));
         assert!(output.text.contains("Au["));
         assert!(!output.text.contains("Yu["));
@@ -11625,6 +13639,49 @@ mod tests {
     }
 
     #[test]
+    fn virtual_default_actions_require_monster_action_table_like_python() {
+        let output = simulate(
+            3096296922,
+            &[
+                "encounter seymour_omnis".to_string(),
+                "tidus armor_break m1".to_string(),
+                "bahamut attack m1".to_string(),
+            ],
+        );
+
+        assert!(output.text.contains("\nm1\n\n"), "{}", output.text);
+        assert!(!output.text.contains("m1 thundara"), "{}", output.text);
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
+    fn planned_party_restores_after_forced_summary_when_needed_like_python() {
+        let output = simulate(
+            3096296922,
+            &[
+                "encounter bfa".to_string(),
+                "stat rikku ctb 0".to_string(),
+                "stat bahamut ctb 10".to_string(),
+                "stat m1 ctb 1".to_string(),
+                "rikku armor_break m1".to_string(),
+                "# rikku chaos_grenade".to_string(),
+                "bahamut attack m1".to_string(),
+            ],
+        );
+
+        let virtual_turns = output
+            .text
+            .find("\nm1\nm2\nm3")
+            .unwrap_or_else(|| panic!("{}", output.text));
+        let bahamut_action = output
+            .text
+            .find("\nbahamut attack m1")
+            .unwrap_or_else(|| panic!("{}", output.text));
+        assert!(virtual_turns < bahamut_action, "{}", output.text);
+        assert_eq!(output.unsupported_count, 0);
+    }
+
+    #[test]
     fn virtual_sinscale_turns_are_manual_only_like_python() {
         let output = simulate(
             1,
@@ -11782,7 +13839,7 @@ mod tests {
         );
 
         assert_eq!(
-            output.text.matches("Spawn: Sinscale#6").count(),
+            output.text.matches("spawn sinscale_6").count(),
             5,
             "{}",
             output.text
@@ -11807,6 +13864,34 @@ mod tests {
             "{}",
             sahagin_chiefs.text
         );
+    }
+
+    #[test]
+    fn generated_encounter_comments_sync_monster_slots_for_pasted_routes() {
+        let output = simulate(
+            3096296922,
+            &[
+                "encounter sinscales".to_string(),
+                "# Encounter:   1 | Sinscales | Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6, Sinscale#6 Normal | Ti[41] M2[45] M5[46] M1[47] M7[47] Au[48] M6[48] M8[48] M4[49] M3[50]".to_string(),
+                "status atb".to_string(),
+                "tidus attack m6".to_string(),
+            ],
+        );
+
+        assert!(
+            output.text.contains(
+                "# ATB: Ti[41] M2[45] M5[46] M1[47] M7[47] Au[48] M6[48] M8[48] M4[49] M3[50]"
+            ),
+            "{}",
+            output.text
+        );
+        assert!(output.text.contains("Sinscale#6 (M6):"), "{}", output.text);
+        assert!(
+            !output.text.contains("Error: No monster in slot 6"),
+            "{}",
+            output.text
+        );
+        assert_eq!(output.unsupported_count, 0);
     }
 
     #[test]
@@ -11852,9 +13937,9 @@ mod tests {
             "{}",
             output.text
         );
-        assert_eq!(
-            output.text.matches("Spawn: Sahagin Chief").count(),
-            3,
+        assert_eq!(output.text.matches("spawn sahagin_chief").count(), 3);
+        assert!(
+            !output.text.contains("Spawn: Sahagin Chief"),
             "{}",
             output.text
         );
@@ -11916,7 +14001,7 @@ mod tests {
         );
 
         assert_eq!(
-            output.text.matches("Spawn: Worker").count(),
+            output.text.matches("spawn worker").count(),
             4,
             "{}",
             output.text
@@ -12229,6 +14314,24 @@ mod tests {
                 ActorId::Character(Character::Wakka),
                 ActorId::Monster(MonsterSlot(1)),
                 ActorId::Monster(MonsterSlot(2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn party_targets_repeat_whole_target_list_for_multi_hit_like_python() {
+        let mut state = SimulationState::new(1);
+        state.party = vec![Character::Tidus, Character::Wakka];
+        let mut action = test_action(ActionTarget::CharactersParty);
+        action.n_of_hits = 2;
+
+        assert_eq!(
+            state.resolve_action_targets(ActorId::Character(Character::Yuna), &action, &[]),
+            vec![
+                ActorId::Character(Character::Tidus),
+                ActorId::Character(Character::Wakka),
+                ActorId::Character(Character::Tidus),
+                ActorId::Character(Character::Wakka),
             ]
         );
     }
@@ -12608,6 +14711,105 @@ mod tests {
             ),
             vec![ActorId::Character(Character::Tidus)]
         );
+    }
+
+    #[test]
+    fn no_target_actions_clear_actor_last_targets_like_python() {
+        let mut state = SimulationState::new(1);
+        state.party = vec![Character::Tidus];
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(2),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        state.actor_last_targets.insert(
+            ActorId::Monster(MonsterSlot(1)),
+            vec![ActorId::Monster(MonsterSlot(2))],
+        );
+
+        state.apply_action_effects(
+            ActorId::Monster(MonsterSlot(1)),
+            Some(&test_action(ActionTarget::None)),
+            &[],
+        );
+
+        assert!(state
+            .actor_last_targets
+            .get(&ActorId::Monster(MonsterSlot(1)))
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Monster(MonsterSlot(1)),
+                &test_action(ActionTarget::LastTarget),
+                &[]
+            ),
+            vec![ActorId::Character(Character::Tidus)]
+        );
+    }
+
+    #[test]
+    fn encounter_start_preserves_character_memory_without_reusing_old_monster_slots() {
+        let mut state = SimulationState::new(1);
+        state.last_actor = Some(ActorId::Character(Character::Yuna));
+        state.last_targets = vec![
+            ActorId::Character(Character::Tidus),
+            ActorId::Monster(MonsterSlot(1)),
+        ];
+        state.actor_last_targets.insert(
+            ActorId::Character(Character::Yuna),
+            vec![
+                ActorId::Character(Character::Tidus),
+                ActorId::Monster(MonsterSlot(1)),
+            ],
+        );
+        state.actor_provokers.insert(
+            ActorId::Monster(MonsterSlot(1)),
+            ActorId::Character(Character::Auron),
+        );
+        state.actor_last_attackers.insert(
+            ActorId::Character(Character::Auron),
+            ActorId::Monster(MonsterSlot(1)),
+        );
+
+        state.process_start_of_encounter();
+
+        assert_eq!(state.last_actor, Some(ActorId::Character(Character::Yuna)));
+        assert_eq!(
+            state.last_targets,
+            vec![ActorId::Character(Character::Tidus)]
+        );
+        assert_eq!(
+            state
+                .actor_last_targets
+                .get(&ActorId::Character(Character::Yuna)),
+            Some(&vec![ActorId::Character(Character::Tidus)])
+        );
+        assert!(!state
+            .actor_provokers
+            .contains_key(&ActorId::Monster(MonsterSlot(1))));
+        assert!(!state
+            .actor_last_attackers
+            .contains_key(&ActorId::Character(Character::Auron)));
+    }
+
+    #[test]
+    fn encounter_start_clears_stale_monster_last_actor_before_slots_are_reused() {
+        let mut state = SimulationState::new(1);
+        state.last_actor = Some(ActorId::Monster(MonsterSlot(1)));
+
+        state.process_start_of_encounter();
+
+        assert_eq!(state.last_actor, None);
     }
 
     #[test]
@@ -13301,6 +15503,49 @@ mod tests {
     }
 
     #[test]
+    fn weapon_statuses_merge_with_action_statuses_like_python() {
+        let mut state = SimulationState::new(1);
+        state.monsters.push(BattleActor::monster_with_key(
+            MonsterSlot(1),
+            Some("worker".to_string()),
+            10,
+            false,
+            1_000,
+        ));
+        state.monsters[0].status_resistances.insert(Status::Dark, 0);
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .weapon_abilities
+            .insert(AutoAbility::Darktouch);
+        let mut action = test_action(ActionTarget::SingleMonster);
+        action.uses_weapon_properties = true;
+        action.status_applications.push(ActionStatus {
+            status: Status::Dark,
+            chance: 100,
+            stacks: 3,
+            ignores_resistance: false,
+        });
+
+        let results = state.apply_action_effects(
+            ActorId::Character(Character::Tidus),
+            Some(&action),
+            &[String::from("m1")],
+        );
+
+        assert_eq!(state.rng.current_positions()[52], 1);
+        assert_eq!(
+            results[0]
+                .statuses
+                .iter()
+                .filter(|(status, _)| *status == Status::Dark)
+                .count(),
+            1
+        );
+        assert_eq!(state.monsters[0].status_stacks.get(&Status::Dark), Some(&3));
+    }
+
+    #[test]
     fn weapon_statuses_stop_after_petrify_lands() {
         let mut state = SimulationState::new(1);
         state.party = vec![Character::Tidus, Character::Yuna];
@@ -13309,10 +15554,13 @@ mod tests {
             .unwrap();
         tidus.weapon_abilities.insert(AutoAbility::Stonestrike);
         tidus.weapon_abilities.insert(AutoAbility::Silencestrike);
+        let mut action = test_action(ActionTarget::SingleCharacter);
+        action.uses_weapon_properties = true;
 
-        state.apply_weapon_statuses(
+        state.apply_action_effects(
             ActorId::Character(Character::Tidus),
-            ActorId::Character(Character::Yuna),
+            Some(&action),
+            &[String::from("yuna")],
         );
 
         let yuna = state.actor(ActorId::Character(Character::Yuna)).unwrap();
@@ -14416,7 +16664,7 @@ mod tests {
     }
 
     #[test]
-    fn counter_revive_auto_regen_can_overheal_like_python() {
+    fn counter_revive_auto_regen_clamps_to_max_like_python() {
         let mut state = SimulationState::new(1);
         state.party = vec![Character::Tidus, Character::Yuna];
         state.ctb_since_last_action = 400;
@@ -14431,7 +16679,7 @@ mod tests {
         state.apply_character_action(Character::Yuna, "auto_phoenix", &[]);
 
         let tidus = state.actor(ActorId::Character(Character::Tidus)).unwrap();
-        assert!(tidus.current_hp > max_hp);
+        assert_eq!(tidus.current_hp, max_hp);
     }
 
     #[test]
@@ -14467,6 +16715,7 @@ mod tests {
             expected_rng.advance_rng(20) & 31,
             false,
             0,
+            DamagePool::Hp,
         );
         let second_damage = calculate_action_damage(
             &user,
@@ -14475,6 +16724,7 @@ mod tests {
             expected_rng.advance_rng(20) & 31,
             false,
             0,
+            DamagePool::Hp,
         );
 
         state.apply_action_effects(ActorId::Character(Character::Tidus), Some(&action), &[]);
@@ -14500,15 +16750,15 @@ mod tests {
         action.overdrive_index = 2;
 
         assert_eq!(
-            calculate_action_damage(&user, &target, &action, 0, false, 0),
+            calculate_action_damage(&user, &target, &action, 0, false, 0, DamagePool::Hp),
             5_000
         );
         assert_eq!(
-            calculate_action_damage(&user, &target, &action, 0, false, 3_000),
+            calculate_action_damage(&user, &target, &action, 0, false, 3_000, DamagePool::Hp),
             7_500
         );
         assert_eq!(
-            calculate_action_damage(&user, &target, &action, 0, false, 6_000),
+            calculate_action_damage(&user, &target, &action, 0, false, 6_000, DamagePool::Hp),
             7_500
         );
     }
@@ -14599,7 +16849,7 @@ mod tests {
         );
 
         let positions = state.rng.current_positions();
-        assert_eq!(positions[52], 1);
+        assert_eq!(positions[52], 2);
         assert_eq!(state.monsters[0].current_hp, 0);
         assert!(state.monsters[0].statuses.contains(&Status::Death));
         assert!(state.monsters[0].statuses.contains(&Status::Eject));
@@ -14636,7 +16886,7 @@ mod tests {
             .unwrap();
         assert!(tidus.statuses.contains(&Status::Petrify));
         assert!(!tidus.statuses.contains(&Status::Eject));
-        assert_eq!(failed_state.rng.current_positions()[60], 1);
+        assert_eq!(failed_state.rng.current_positions()[60], 2);
 
         let mut success_state = SimulationState::new(1);
         success_state.monsters.push(BattleActor::monster_with_key(
@@ -14980,6 +17230,21 @@ mod tests {
     }
 
     #[test]
+    fn counter_target_without_last_actor_uses_unknown_like_python() {
+        let mut state = SimulationState::new(1);
+        state.last_actor = None;
+
+        assert_eq!(
+            state.resolve_action_targets(
+                ActorId::Monster(MonsterSlot(1)),
+                &test_action(ActionTarget::Counter),
+                &[]
+            ),
+            vec![ActorId::Character(Character::Unknown)]
+        );
+    }
+
+    #[test]
     fn duration_statuses_tick_down_at_end_of_turn() {
         let mut state = SimulationState::new(1);
         state
@@ -15212,7 +17477,7 @@ mod tests {
     }
 
     #[test]
-    fn drain_actions_can_overheal_user_like_python() {
+    fn drain_actions_clamp_recovery_to_max_like_python() {
         let mut state = SimulationState::new(1);
         let mut monster = BattleActor::monster_with_key(
             MonsterSlot(1),
@@ -15233,7 +17498,7 @@ mod tests {
             &[String::from("tidus")],
         );
 
-        assert!(state.monsters[0].current_hp > max_hp);
+        assert_eq!(state.monsters[0].current_hp, max_hp);
     }
 
     #[test]
@@ -15292,6 +17557,36 @@ mod tests {
             2
         );
         assert_eq!(damage.mp.unwrap().damage, 2);
+    }
+
+    #[test]
+    fn mp_drain_recovery_clamps_to_max_like_python() {
+        let mut state = SimulationState::new(1);
+        state
+            .actor_mut(ActorId::Character(Character::Tidus))
+            .unwrap()
+            .current_mp = 10;
+        let yuna_max_mp = state
+            .character_actor(Character::Yuna)
+            .unwrap()
+            .effective_max_mp();
+        state
+            .actor_mut(ActorId::Character(Character::Yuna))
+            .unwrap()
+            .current_mp = yuna_max_mp - 1;
+        let user = state.character_actor(Character::Yuna).unwrap().clone();
+        let mut action = test_action(ActionTarget::SingleCharacter);
+        action.damage_formula = DamageFormula::FixedNoVariance;
+        action.base_damage = 10;
+        action.damages_mp = true;
+        action.drains = true;
+
+        state.apply_action_damage(&user, ActorId::Character(Character::Tidus), &action, 0);
+
+        assert_eq!(
+            state.character_actor(Character::Yuna).unwrap().current_mp,
+            yuna_max_mp
+        );
     }
 
     #[test]
@@ -15421,7 +17716,7 @@ mod tests {
                 .character_actor(Character::Tidus)
                 .unwrap()
                 .current_mp,
-            -3
+            0
         );
     }
 
@@ -15539,8 +17834,8 @@ mod tests {
         assert_eq!(
             output.text,
             concat!(
-                "Spawn: Piranha (M1) with 0 CTB\n",
-                "Spawn: Worker (M2) with 0 CTB\n",
+                "spawn piranha 1 0\n",
+                "spawn worker 2 0\n",
                 "Elemental affinity to Fire of Piranha (M1) changed to Immune\n",
                 "Elemental affinity to Ice of Worker (M2) changed to Immune\n",
                 "Elemental affinity to Thunder of Worker (M2) changed to Immune\n",
@@ -15566,7 +17861,7 @@ mod tests {
         assert_eq!(
             output.text,
             concat!(
-                "Spawn: Tanker (M1) with 84 CTB\n",
+                "spawn tanker 1\n",
                 "Error: element can only be one of these values: fire, ice, thunder, water, holy\n",
                 "Error: affinity can only be one of these values: absorbs, immune, resists, weak, neutral\n",
                 "Elemental affinity to Holy of Tanker (M1) changed to Weak",

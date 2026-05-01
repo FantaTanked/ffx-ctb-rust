@@ -43,7 +43,9 @@ pub fn render_ctb_with_previous(
         .map(|previous_input| first_changed_prepared_line(previous_input, &prepared.lines))
         .unwrap_or(1);
     let encounters = scan_encounters_from_text(input);
-    let simulated = simulator::simulate(seed, &prepared.lines);
+    let simulated = simulator::SimulationState::new(seed)
+        .with_editor_echoes()
+        .run_lines(&prepared.lines);
     let implemented = simulated.unsupported_count == 0;
     RenderResponse {
         seed,
@@ -94,10 +96,24 @@ pub fn scan_encounters(lines: &[String]) -> Vec<EncounterBlock> {
     let mut current_name: Option<String> = None;
     let mut current_start_line: Option<usize> = None;
     let mut encounter_index = 0;
+    let mut in_block_comment = false;
 
     for (zero_index, raw_line) in lines.iter().enumerate() {
         let line_number = zero_index + 1;
         let stripped = raw_line.trim();
+        if stripped.starts_with("/*") {
+            let ends_on_same_line = stripped.ends_with("*/");
+            if !ends_on_same_line {
+                in_block_comment = true;
+            }
+            continue;
+        }
+        if in_block_comment {
+            if stripped.ends_with("*/") {
+                in_block_comment = false;
+            }
+            continue;
+        }
         if !stripped.to_ascii_lowercase().starts_with("encounter ") {
             continue;
         }
@@ -132,7 +148,10 @@ pub fn scan_encounters(lines: &[String]) -> Vec<EncounterBlock> {
 }
 
 pub fn scan_encounters_from_text(input: &str) -> Vec<EncounterBlock> {
-    let lines = input.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+    let lines = input
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+        .collect::<Vec<_>>();
     scan_encounters(&lines)
 }
 
@@ -207,9 +226,84 @@ mod tests {
     }
 
     #[test]
+    fn render_response_treats_parser_errors_as_handled_commands() {
+        let response = render_ctb(3096296922, "definitely unknown");
+
+        assert!(response.output.contains("Error: Impossible to parse"));
+        assert!(response.implemented);
+        assert_eq!(response.unsupported_count, 0);
+        assert!(!response.parity_complete);
+    }
+
+    #[test]
     fn scans_raw_input_encounters_for_web_editor_line_numbers() {
         let encounters = scan_encounters_from_text("encounter a\n/repeat 2 1\nencounter b");
         assert_eq!(encounters[1].start_line, 3);
+    }
+
+    #[test]
+    fn scans_raw_input_encounters_preserves_textarea_trailing_blank_line() {
+        let encounters = scan_encounters_from_text("encounter tanker\r\nstatus atb\r\n");
+        assert_eq!(encounters[0].start_line, 1);
+        assert_eq!(encounters[0].end_line, 3);
+    }
+
+    #[test]
+    fn scans_encounters_skip_block_commented_rows_like_python_web() {
+        let encounters = scan_encounters_from_text(
+            "/*\nencounter tanker\n*/\nencounter chocobo_eater\n/* encounter tanker */\nencounter ammes\n",
+        );
+
+        assert_eq!(
+            encounters,
+            vec![
+                EncounterBlock {
+                    index: 1,
+                    name: "chocobo_eater".to_string(),
+                    start_line: 4,
+                    end_line: 5,
+                },
+                EncounterBlock {
+                    index: 2,
+                    name: "ammes".to_string(),
+                    start_line: 6,
+                    end_line: 7,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn scans_encounters_end_block_comments_on_trailing_marker() {
+        let encounters =
+            scan_encounters_from_text("/*\nencounter tanker\nnote */\nencounter chocobo_eater\n");
+
+        assert_eq!(
+            encounters,
+            vec![EncounterBlock {
+                index: 1,
+                name: "chocobo_eater".to_string(),
+                start_line: 4,
+                end_line: 5,
+            }]
+        );
+    }
+
+    #[test]
+    fn scans_encounters_keep_block_comment_open_until_trailing_marker_like_python() {
+        let encounters = scan_encounters_from_text(
+            "/* note */ trailing text\nencounter tanker\nstill ignored */\nencounter chocobo_eater\n",
+        );
+
+        assert_eq!(
+            encounters,
+            vec![EncounterBlock {
+                index: 1,
+                name: "chocobo_eater".to_string(),
+                start_line: 4,
+                end_line: 5,
+            }]
+        );
     }
 
     #[test]

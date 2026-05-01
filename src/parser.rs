@@ -104,6 +104,9 @@ pub fn parse_raw_action_line(raw_line: &str) -> ParsedCommand {
     if trimmed.is_empty() {
         return ParsedCommand::Blank;
     }
+    if is_python_result_header(trimmed) {
+        return ParsedCommand::Blank;
+    }
     if raw_line.starts_with('#') {
         return ParsedCommand::Comment(raw_line.to_string());
     }
@@ -111,6 +114,13 @@ pub fn parse_raw_action_line(raw_line: &str) -> ParsedCommand {
         return ParsedCommand::Directive(raw_line.to_string());
     }
     parse_edited_action_line(&edit_action_line(raw_line))
+}
+
+fn is_python_result_header(line: &str) -> bool {
+    matches!(
+        line.to_ascii_lowercase().as_str(),
+        "action results" | "drop results" | "encounter results"
+    )
 }
 
 pub fn parse_edited_action_line(edited_line: &str) -> ParsedCommand {
@@ -555,6 +565,15 @@ mod tests {
             }
         );
         assert_eq!(parse_raw_action_line(""), ParsedCommand::Blank);
+        assert_eq!(
+            parse_raw_action_line("Action Results"),
+            ParsedCommand::Blank
+        );
+        assert_eq!(parse_raw_action_line("Drop Results"), ParsedCommand::Blank);
+        assert_eq!(
+            parse_raw_action_line("Encounter Results"),
+            ParsedCommand::Blank
+        );
     }
 
     #[test]

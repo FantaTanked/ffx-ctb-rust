@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 const DEFAULT_MACROS_TOML: &str = include_str!("../data/default_macros.toml");
 
@@ -26,15 +26,45 @@ pub fn prepare_action_lines(input: &str) -> PreparedScript {
     PreparedScript { lines }
 }
 
+pub fn prepare_action_lines_before_raw_line(input: &str, cursor_line: usize) -> PreparedScript {
+    let prefix = input
+        .lines()
+        .take(cursor_line.saturating_sub(1))
+        .collect::<Vec<_>>()
+        .join("\n");
+    prepare_action_lines(&prefix)
+}
+
 pub fn apply_action_macros(input: &str) -> String {
-    let mut text = format!("\n{input}\n");
-    for (name, macro_text) in action_macros() {
-        text = text.replace(&format!("\n/macro {name}\n"), &format!("\n{macro_text}\n"));
+    let macros = action_macros()
+        .into_iter()
+        .collect::<HashMap<String, String>>();
+    let mut text = input.to_string();
+    for _ in 0..10 {
+        let mut changed = false;
+        let mut expanded = Vec::new();
+        for line in text.lines() {
+            if let Some(name) = line.strip_prefix("/macro ") {
+                if let Some(macro_text) = macros.get(name) {
+                    expanded.extend(macro_text.lines().map(ToOwned::to_owned));
+                    changed = true;
+                    continue;
+                }
+            }
+            expanded.push(line.to_string());
+        }
+        if !changed {
+            break;
+        }
+        text = expanded.join("\n");
     }
-    text[1..text.len() - 1].to_string()
+    text
 }
 
 pub fn edit_action_line(line: &str) -> String {
+    if let Some(normalized) = normalize_prefixed_encounter_line(line) {
+        return normalized;
+    }
     let normalized = normalize_roll_alias_line(line);
     let mut words = normalized.split_whitespace();
     let Some(head) = words.next() else {
@@ -54,6 +84,25 @@ pub fn edit_action_line(line: &str) -> String {
         return format!("equip {normalized}");
     }
     normalized
+}
+
+fn normalize_prefixed_encounter_line(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let lowered = trimmed.to_ascii_lowercase();
+    if lowered.starts_with("+-encounter ") {
+        return Some(trimmed[2..].to_string());
+    }
+    let index = lowered.find("encounter ")?;
+    if index == 0 {
+        return None;
+    }
+    let prefix = &trimmed[..index];
+    let (number, _) = prefix.split_once(" - ")?;
+    if number.trim().chars().all(|ch| ch.is_ascii_digit()) {
+        Some(trimmed[index..].to_string())
+    } else {
+        None
+    }
 }
 
 pub fn normalize_roll_alias_line(line: &str) -> String {
@@ -227,6 +276,7 @@ fn finish_multiline_macro(
 mod tests {
     use super::{
         apply_action_macros, edit_action_line, normalize_roll_alias_line, prepare_action_lines,
+        prepare_action_lines_before_raw_line,
     };
 
     #[test]
@@ -259,6 +309,18 @@ mod tests {
         assert_eq!(
             edit_action_line("Piranha attack"),
             "monsteraction Piranha attack"
+        );
+        assert_eq!(
+            edit_action_line("71 - rikku_tutencounter rikku_tutorial"),
+            "encounter rikku_tutorial"
+        );
+        assert_eq!(
+            edit_action_line("+-encounter thunder_plains_south"),
+            "encounter thunder_plains_south"
+        );
+        assert_eq!(
+            edit_action_line("note encounter tanker"),
+            "note encounter tanker"
         );
         assert_eq!(
             edit_action_line("weapon tidus 1 initiative"),
@@ -303,6 +365,22 @@ mod tests {
                 "/repeat 1 2".to_string(),
                 "stat tidus strength +1".to_string(),
                 "stat tidus agility +2".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn prepares_prefix_before_raw_cursor_line_like_python_editor_helpers() {
+        let prepared =
+            prepare_action_lines_before_raw_line("/macro moonflow grid\nparty tw\nstatus atb", 3);
+
+        assert_eq!(
+            prepared.lines,
+            vec![
+                "stat tidus hp +200".to_string(),
+                "stat tidus strength +1".to_string(),
+                "stat tidus agility +2".to_string(),
+                "party tw".to_string(),
             ]
         );
     }
