@@ -1,0 +1,243 @@
+/usage
+
+# -- Zanarkand --
+party ta
+sinscale_6 auron
+sinscale_6 tidus
+sinscale_6 auron
+sinscale_6 tidus
+sinscale_6 auron
+sinscale_6 tidus
+
+sinscale_6 auron
+sinscale_6 auron
+sinscale_6 auron
+sinscale_6 auron
+sinscale_6 auron
+sinspawn_ammes tidus
+
+tanker tidus
+
+# -- Underwater Ruins --
+party t
+sahagin_4 tidus
+sahagin_4 tidus
+
+# Geosgaeno doesn't roll RNG
+
+party tr
+klikk rikku
+
+# Forced fight
+piranha_3 rikku
+piranha_3 rikku
+
+tros rikku
+
+# -- Besaid --
+party tw
+
+# Forced encounters
+party tywl
+dingo tidus
+condor wakka
+water_flan lulu
+??? tidus
+garuda_3 wakka
+
+# -- S.S. Liki --
+party tykwl
+sin wakka
+sinspawn_echuilles tidus
+sinscale_3 tidus
+sinscale_3 tidus
+sinscale_3 tidus
+sinscale_3 tidus
+
+# -- Kilika --
+geneauxs_tentacle wakka
+geneauxs_tentacle wakka
+sinspawn_geneaux wakka
+
+lord_ochu wakka
+
+# -- Luca --
+# Fight 1
+worker tidus
+worker tidus
+
+# Fight 2
+worker tidus
+worker tidus
+
+# Fight 3
+worker tidus
+worker tidus
+worker kimahri
+worker kimahri
+worker lulu
+worker lulu
+
+oblitzerator tidus
+
+sahagin_chief wakka
+sahagin_chief wakka
+sahagin_chief wakka
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief wakka
+sahagin_chief wakka
+sahagin_chief wakka
+sahagin_chief wakka
+sahagin_chief wakka
+sahagin_chief wakka
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief tidus
+sahagin_chief wakka
+
+# Forced encounters
+party tyakwl
+vouivre_2 auron
+garuda_2 wakka
+
+# -- Mi'ihen --
+# Piercing tutorial
+raldo_2 auron
+
+chocobo_eater yuna
+
+# -- Moonflow --
+extractor wakka
+
+party tyakwlr
+
+# -- Macalania Woods --
+spherimorph wakka
+
+# -- Lake Macalania --
+negator unknown
+crawler wakka
+
+# -- Macalania Temple --
+# Seymour
+guado_guardian wakka
+guado_guardian wakka
+anima wakka
+seymour wakka
+
+# -- Crevasse --
+# Wendigo
+wendigo wakka
+guado_guardian_2 wakka
+guado_guardian_2 wakka
+
+# -- Bikanel --
+party takwlr
+
+# -- Home --
+# Fight 1
+guado_guardian_3 wakka
+bomb_2 wakka
+bomb_2 wakka
+bomb_2 wakka
+
+# Fight 2
+guado_guardian_3 wakka
+dual_horn_2 wakka
+dual_horn_2 wakka
+
+# Fight 3
+guado_guardian_3 wakka
+chimera_2 wakka
+chimera_2 wakka
+
+# -- Airship --
+evrae wakka
+
+# -- Bevelle --
+# Fight 1
+warrior_monk wakka
+rifle wakka
+warrior_monk_2 wakka
+fire_rifle wakka
+warrior_monk wakka
+rifle wakka
+
+# Fight 2
+ykt-63 wakka
+warrior_monk_2 wakka
+fire_rifle wakka
+warrior_monk_2 wakka
+fire_rifle wakka
+
+# Fight 3
+warrior_monk wakka
+rifle wakka
+warrior_monk_2 wakka
+fire_rifle wakka
+warrior_monk wakka
+rifle wakka
+
+# Fight 4
+ykt-63 wakka
+warrior_monk_2 wakka
+fire_rifle wakka
+warrior_monk_2 wakka
+fire_rifle wakka
+
+# Fight 5
+warrior_monk wakka
+yat-99 wakka
+warrior_monk wakka
+rifle wakka
+rifle wakka
+
+# -- Via Purifico --
+party ya
+
+# isaaru summons
+ifrit_2 ixion
+valefor ixion
+bahamut ixion
+# bahamut drops 2 items
+# but the items are both nothing
+roll rng11 2
+
+# -- Underwater --
+party twr
+
+evrae_altana wakka
+
+# -- Highbridge --
+party tyakwlr
+seymour_natus wakka
+
+# -- Calm Lands --
+defender_x wakka
+
+# -- Gagazet --
+yenke_ronso kimahri
+biran_ronso kimahri
+
+seymour_flux wakka
+
+sanctuary_keeper wakka
+
+# -- Zanarkand --
+spectral_keeper wakka
+
+yunalesca wakka
+
+# -- Sin --
+left_fin wakka
+
+right_fin wakka
+
+sin_2 wakka
+
+sin_3 wakka
+
+seymour_omnis wakka

@@ -1,0 +1,742 @@
+/usage
+
+# -- Zanarkand --
+encounter sinscales
+auron attack sinscale_6
+tidus attack sinscale_6
+auron attack sinscale_6
+tidus attack sinscale_6
+auron attack sinscale_6
+tidus attack sinscale_6
+
+encounter ammes
+# Demi 1
+auron dragon_fang 3.0
+tidus attack m1
+# Demi 2
+tidus spiral_cut m1 2.5
+auron attack m1
+# Demi 3
+tidus attack m1
+auron attack m1
+# Demi 4
+tidus attack m1
+auron attack m1
+# Demi 5
+tidus attack m1
+auron attack m1
+# Demi 6
+# tidus attack m1
+# auron attack m1
+status m1
+
+encounter tanker
+auron attack auron
+tidus attack tanker
+auron attack tanker
+tidus attack tanker
+
+# -- Underwater Ruins --
+encounter sahagins
+tidus attack sahagin_4
+tidus attack sahagin_4
+
+encounter geosgaeno
+# tidus attack geosgaeno
+# tidus attack geosgaeno
+# tidus attack geosgaeno
+
+encounter klikk_1
+stat m1 hp 750
+# tidus potion tidus
+tidus attack m1
+tidus attack m1
+tidus attack m1
+# tidus potion tidus
+tidus attack m1
+tidus attack m1
+tidus attack m1
+status m1
+
+encounter klikk_2
+rikku grenade m1
+tidus attack m1
+rikku steal m1
+tidus attack m1
+rikku steal m1
+tidus attack m1
+rikku attack m1
+rikku attack m1
+tidus attack m1
+rikku attack m1
+tidus attack m1
+rikku attack m1
+tidus attack m1
+rikku attack m1
+tidus attack m1
+status m1
+
+encounter underwater_ruins
+tidus attack piranha
+tidus attack piranha_2
+# tidus attack piranha_3
+# tidus attack piranha_3
+
+encounter piranhas
+# rikku grenade piranha_3
+# rikku grenade piranha_3
+rikku attack piranha_3
+tidus attack piranha_3
+rikku attack piranha_3
+tidus attack piranha_3
+
+encounter tros
+tidus attack m1
+# tidus attack m1
+tidus stand_by
+# tidus stand_by
+
+rikku grenade m1
+rikku grenade m1
+rikku grenade m1
+rikku grenade m1
+rikku grenade m1
+rikku grenade m1
+status m1
+
+# -- Besaid --
+encounter besaid_lagoon
+tidus attack piranha
+wakka attack piranha
+# tidus escape
+# wakka escape
+
+encounter besaid_lagoon
+tidus attack piranha
+wakka attack piranha
+# tidus escape
+# wakka escape
+
+# Tidus equips Brotherhood
+weapon tidus 4 strength_+5%
+
+encounter wakka_tutorial
+tidus attack dingo
+wakka attack condor
+
+encounter elements_tutorial
+# Tidus' crits are disabled
+tidus attacknocrit water_flan
+lulu thunder water_flan
+
+encounter kimahri
+# tidus potion tidus
+tidus attack m1
+tidus attack m1
+tidus attack m1
+tidus attack m1
+tidus attack m1
+tidus attack m1
+status m1
+
+encounter garuda_1
+valefor thunder garuda_3
+valefor thunder garuda_3
+valefor thunder garuda_3
+valefor thunder garuda_3
+valefor thunder garuda_3
+valefor thunder garuda_3
+
+encounter garuda_2
+tidus escape
+yuna escape
+lulu escape
+
+encounter besaid_forced_encounter
+tidus attack dingo_2
+wakka attack condor_2
+lulu thunder water_flan_2
+
+# encounter besaid_road
+
+# -- S.S. Liki --
+encounter sin_fin
+lulu thunder m4
+kimahri lancet m4
+kimahri lancet m4
+lulu thunder m4
+valefor energy_blast m4
+status m4
+
+encounter echuilles
+tidus spiral_cut m1 2.5
+wakka dark_attack m1
+tidus attack m1
+wakka attack m1
+tidus attack m1
+wakka attack m1
+# Echuilles uses Blender
+tidus attack m1
+wakka dark_attack m1
+tidus attack m1
+wakka attack m1
+tidus attack m1
+wakka attack m1
+# Echuilles uses Blender
+tidus attack m1
+wakka attack m1
+status m1
+
+# -- Kilika --
+encounter lancet_tutorial
+kimahri lancet m1
+kimahri attack m1
+# lulu thunder m1
+valefor fire m1
+
+# encounter lord_ochu
+
+encounter kilika_woods
+encounter kilika_woods
+
+encounter geneaux
+# tidus attack m1
+valefor energy_blast
+valefor fire m1
+valefor fire m1
+valefor fire m1
+valefor fire m1
+status m1
+
+encounter kilika_woods
+encounter kilika_woods
+encounter kilika_woods
+
+# encounter lord_ochu
+
+# Tidus equips Stunning Steel
+weapon tidus 1 slowtouch
+
+# -- Luca --
+encounter machina_1
+lulu thunder worker
+lulu thunder worker
+
+encounter machina_2
+lulu thunder worker
+lulu thunder worker
+
+encounter machina_3
+tidus attack worker
+kimahri attack worker
+lulu thunder worker
+tidus attack worker
+kimahri attack worker
+# kimahri seed_cannon worker
+
+lulu thunder worker
+lulu thunder worker
+
+tidus attack worker
+kimahri attack worker
+lulu thunder worker
+tidus attack worker
+kimahri attack worker
+tidus attack worker
+
+encounter oblitzerator
+lulu thunder crane
+lulu thunder crane
+lulu thunder crane
+kimahri attack oblitzerator
+lulu thunder oblitzerator
+# tidus attack oblitzerator
+
+# If Tidus equips Lightning Steel
+# weapon tidus 1 lightningstrike
+
+encounter sahagin_chiefs
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+tidus attack sahagin_chief
+wakka attack sahagin_chief
+
+encounter vouivre
+auron attack vouivre_2
+
+encounter garuda
+tidus attack m1
+wakka attack m1
+# wakka potion auron
+auron power_break m1
+auron attack m1
+auron attack m1
+
+auron attack m1
+auron attack m1
+auron attack m1
+status m1
+
+# -- Mi'ihen --
+encounter pierce_tutorial
+# Tidus' crits are disabled
+tidus attacknocrit raldo
+auron attack raldo
+
+encounter miihen_screen_1
+kimahri lancet bomb
+
+encounter miihen_screen_1
+encounter miihen_screen_1
+
+encounter miihen_screen_2_3
+encounter miihen_screen_2_3
+encounter miihen_screen_2_3
+encounter miihen_screen_2_3
+encounter miihen_screen_2_3
+encounter miihen_screen_2_3
+
+# encounter simulation_miihen
+
+encounter chocobo_eater
+tidus spiral_cut chocobo_eater 2.5
+tidus attack tidus
+wakka attack tidus
+auron attack tidus
+
+# -- Old Road --
+encounter old_road
+encounter old_road
+encounter old_road
+encounter old_road
+
+# encounter simulation_old_road
+
+# -- Clasko Skip Screen --
+encounter clasko_skip_screen
+encounter clasko_skip_screen
+
+encounter clasko_skip_screen
+encounter clasko_skip_screen
+encounter clasko_skip_screen
+encounter clasko_skip_screen
+encounter clasko_skip_screen
+
+# -- Djose --
+encounter djose_highroad_front_half
+kimahri lancet basilisk
+
+encounter djose_highroad_front_half
+
+encounter djose_highroad_back_half
+encounter djose_highroad_back_half
+encounter djose_highroad_back_half
+
+# -- Moonflow --
+encounter moonflow_south
+encounter moonflow_south
+encounter moonflow_south
+encounter moonflow_south
+encounter moonflow_south
+encounter moonflow_south
+encounter moonflow_south
+encounter moonflow_south
+
+weapon tidus 1 slowtouch
+# weapon tidus 1 lightningstrike
+# weapon tidus 4 strength_+5%
+
+weapon wakka 2 strength_+5% strength_+3%
+# weapon wakka 1 lightningstrike
+
+encounter extractor
+wakka attack extractor
+wakka attack extractor
+wakka attack extractor
+wakka attack extractor
+wakka attack extractor
+wakka thunder_shot 16.0
+
+tidus attack extractor
+tidus attack extractor
+tidus attack extractor
+tidus attack extractor
+tidus attack extractor
+tidus spiral_cut extractor 2.5
+
+# Mix tutorial
+encounter rikku_tutorial
+rikku ultra_potion rikku
+
+encounter moonflow_north
+encounter moonflow_north
+
+# encounter simulation_guadosalam
+
+# -- Thunder Plains --
+encounter thunder_plains_south
+encounter thunder_plains_south
+encounter thunder_plains_south
+
+encounter thunder_plains_south_1_stone
+encounter thunder_plains_south_1_stone
+encounter thunder_plains_south_1_stone
+encounter thunder_plains_south_1_stone
+
+# Travel Agency
+encounter simulation_thunder_plains
+
+encounter thunder_plains_north_1_stone
+encounter thunder_plains_north_1_stone
+encounter thunder_plains_north_1_stone
+encounter thunder_plains_north_1_stone
+encounter thunder_plains_north_1_stone
+encounter thunder_plains_north_1_stone
+encounter thunder_plains_north_1_stone
+
+# -- Macalania Woods --
+encounter macalania_woods
+encounter macalania_woods
+encounter macalania_woods
+encounter macalania_woods
+encounter macalania_woods
+encounter macalania_woods
+encounter macalania_woods
+encounter macalania_woods
+
+weapon tidus 1 first_strike
+
+encounter spherimorph
+tidus spiral_cut spherimorph 2.5
+# rikku grenade monsters
+element m1 thunder weak
+rikku lightning_bolt
+status m1
+
+encounter lake_macalania
+
+# -- Lake Macalania --
+encounter crawler
+rikku lunar_curtain auron
+rikku lightning_marble m2
+
+# If Negator doesn't die
+# kimahri lancet m2
+# auron phoenix_down rikku
+
+rikku lightning_marble m1
+auron phoenix_down rikku
+rikku lightning_marble m1
+# tidus hi-potion auron
+
+# 1st Mana Beam
+auron phoenix_down rikku
+auron phoenix_down tidus
+rikku lightning_bolt
+yuna phoenix_down rikku
+auron hi-potion auron
+
+# 2nd Mana Beam
+auron phoenix_down rikku
+rikku lightning_marble m1
+
+# Tidus equips Brotherhood
+weapon tidus 4 strength_+10% strength_+5% waterstrike
+
+# -- Macalania Temple --
+encounter seymour
+stat m4 hp 0
+rikku electro_marble m2
+valefor energy_blast
+stat m2 hp 0
+
+spawn anima 4
+m4 boost
+kimahri self-destruct m4
+shiva diamond_dust
+
+shiva blizzara shiva_c
+shiva blizzara shiva_c
+shiva diamond_dust
+m4 does_nothing
+shiva blizzara m4
+m4 boost
+shiva diamond_dust
+
+spawn seymour 2
+rikku chaos_grenade
+
+# Tidus unequips Brotherhood
+weapon tidus 1 first_strike
+
+# encounter guado_encounter_1
+# encounter guado_encounter_2
+# encounter guado_encounter_3
+
+# -- Crevasse --
+encounter crevasse
+encounter crevasse
+encounter crevasse
+
+encounter wendigo
+rikku lightning_marble m2
+rikku chaos_grenade
+
+shiva diamond_dust
+shiva blizzara m2
+shiva blizzara m2
+shiva blizzara m2
+shiva blizzara m2
+
+tidus spiral_cut m2 2.5
+tidus attack m2
+rikku attack m2
+yuna phoenix_down rikku
+yuna attack wendigo
+rikku cluster_bomb
+status m2
+
+# -- Bikanel --
+encounter zu
+
+encounter sanubia_desert_east
+encounter sanubia_desert_east
+
+encounter machina_steal_tutorial
+
+encounter sanubia_desert_east
+
+encounter sanubia_desert_central
+encounter sanubia_desert_central
+encounter sanubia_desert_central
+
+encounter sanubia_desert_ruins
+
+encounter sanubia_desert_west
+encounter sanubia_desert_west
+
+# Sandragora Grind
+encounter sandragora
+/repeat 110
+
+# -- Home --
+# Guado Guardian #3 is in Home
+# and Airship encounters
+
+encounter guado_+_3_bomb
+rikku silence_grenade monsters
+rikku smoke_bomb monsters
+# rikku petrify_grenade
+auron attack m1
+rikku grenade monsters
+rikku grenade monsters
+
+encounter guado_+_2_dual_horn
+kimahri lancet dual_horn_2
+kimahri stone_breath
+
+# encounter home
+
+encounter guado_+_2_chimera
+kimahri lancet chimera_2
+kimahri stone_breath
+
+# -- Airship --
+# encounter airship
+
+encounter evrae
+# TODO
+
+# -- Bevelle --
+encounter bevelle_guards_1
+# TODO
+
+encounter bevelle_guards_2
+# TODO
+
+encounter bevelle_guards_3
+# TODO
+
+encounter bevelle_guards_4
+# TODO
+
+encounter bevelle_guards_5
+# TODO
+
+# -- Via Purifico --
+encounter via_purifico_corridor
+# TODO
+
+encounter via_purifico_corridor
+# TODO
+
+encounter isaaru_grothia
+# TODO
+
+encounter isaaru_pterya
+# TODO
+
+encounter isaaru_spathi
+# TODO
+
+# -- Underwater --
+encounter via_purifico_underwater
+
+encounter evrae_altana
+tidus elixir evrae_altana
+tidus elixir evrae_altana
+# tidus phoenix_down evrae_altana
+# tidus phoenix_down evrae_altana
+
+# -- Highbridge --
+encounter highbridge
+tidus attack ykt-63
+yuna attack ykt-63
+
+encounter highbridge
+
+encounter seymour_natus
+# TODO
+
+# -- Calm Lands --
+
+encounter calm_lands_south_before_defender_x
+encounter calm_lands_south_before_defender_x
+encounter calm_lands_south_before_defender_x
+encounter calm_lands_south_before_defender_x
+encounter calm_lands_south_before_defender_x
+encounter calm_lands_south_before_defender_x
+
+encounter calm_lands_central_north_east
+encounter calm_lands_central_north_east
+encounter calm_lands_central_north_east
+encounter calm_lands_central_north_east
+
+encounter defender_x
+# TODO
+
+# -- Cavern of the Stolen Fayth --
+# encounter calm_lands_gorge
+# encounter cave_green_zone
+encounter cave_white_zone
+ixion attack ghost
+ixion attack ghost
+
+# -- Gagazet --
+encounter biran_&_yenke
+# TODO
+
+# encounter gagazet_mountain
+
+encounter seymour_flux
+# TODO
+
+# encounter gagazet_cave
+
+# encounter gagazet_underwater
+
+encounter sanctuary_keeper
+# TODO
+
+# -- Zanarkand --
+# encounter zanarkand_overpass
+
+# encounter zanarkand_dome
+
+encounter spectral_keeper
+# TODO
+
+encounter yunalesca
+# TODO
+
+# -- Sin --
+encounter left_fin
+# TODO
+
+encounter right_fin
+# TODO
+
+encounter sin_core
+# TODO
+
+encounter overdrive_sin
+# TODO
+
+# encounter inside_sin_front
+
+encounter seymour_omnis
+# TODO
+
+# encounter inside_sin_back
+
+# -- Nucleus --
+# encounter
+# encounter
+
+encounter bfa
+# TODO
+
+encounter possessed_valefor
+# TODO
+
+encounter possessed_ifrit
+# TODO
+
+encounter possessed_ixion
+# TODO
+
+encounter possessed_shiva
+# TODO
+
+encounter possessed_bahamut
+stat bahamut luck 1
+# TODO
+
+encounter yu_yevon
+# TODO

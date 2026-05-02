@@ -410,6 +410,59 @@ pre {
   white-space: pre;
 }
 
+.search-dialog {
+  width: min(1100px, calc(100vw - 32px));
+  height: min(760px, calc(100vh - 32px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.search-dialog::backdrop {
+  background: rgb(0 0 0 / 0.58);
+}
+
+.search-dialog-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.search-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.search-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 45px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.search-result-actions:empty {
+  display: none;
+}
+
+#noEncountersOutput {
+  border: 0;
+  border-radius: 0;
+  white-space: pre-wrap;
+  font-size: 14px;
+}
+
 .output-line {
   display: block;
   min-height: 1.45em;

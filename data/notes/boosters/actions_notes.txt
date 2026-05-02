@@ -1,0 +1,334 @@
+/usage
+
+# -- Zanarkand --
+encounter sinscales
+auron attack m1
+tidus attack m2
+auron attack m3
+tidus attack m4
+auron attack m5
+tidus attack m6
+
+encounter ammes
+auron dragon_fang 2.0
+
+tidus ice_gem
+
+encounter tanker
+auron attack auron
+tidus ice_gem m1
+
+# -- Underwater Ruins --
+encounter sahagins
+tidus grenade monsters
+
+encounter geosgaeno
+
+encounter klikk_1
+tidus shining_gem m1
+
+encounter klikk_2
+rikku shining_gem m1
+
+encounter piranhas
+rikku grenade monsters
+
+encounter tros
+rikku shining_gem m1
+
+# -- Besaid --
+
+# Tidus equips Brotherhood
+weapon tidus 4 strength_+5%
+
+# Besaid grid
+stat wakka strength +166
+stat wakka agility +12
+stat yuna strength +44
+stat yuna agility +4
+
+# Besaid tutorial fights
+encounter wakka_tutorial
+tidus attack m1
+wakka attack m2
+
+encounter elements_tutorial
+# Tidus' crits are disabled
+tidus attacknocrit m1
+lulu thunder m1
+
+encounter kimahri
+tidus shining_gem m1
+
+encounter garuda_1
+wakka attack m1
+
+encounter garuda_2
+
+encounter besaid_forced_encounter
+
+# -- S.S. Liki --
+encounter sin_fin
+yuna shining_gem m4
+
+encounter echuilles
+wakka attack m1
+
+# -- Kilika --
+encounter lancet_tutorial
+
+encounter geneaux
+wakka attack m1
+
+encounter lord_ochu
+wakka attack m1
+
+# -- Luca --
+encounter machina_1
+tidus grenade monsters
+
+encounter machina_2
+tidus grenade monsters
+
+encounter machina_3
+tidus grenade monsters
+
+spawn worker 1
+spawn worker 2
+kimahri grenade monsters
+
+spawn worker 1
+spawn worker 2
+lulu grenade monsters
+
+encounter oblitzerator
+tidus dark_matter m1
+
+encounter sahagin_chiefs
+wakka grenade m1
+wakka grenade m2
+wakka grenade m3
+
+tidus grenade m1
+tidus grenade m2
+tidus grenade m3
+
+wakka grenade m1
+wakka grenade m2
+wakka grenade m3
+
+wakka grenade m1
+wakka grenade m2
+wakka grenade m3
+
+tidus grenade m1
+tidus grenade m2
+tidus grenade m3
+tidus grenade m4
+
+wakka attack m1
+
+encounter vouivre
+auron attack m1
+
+encounter garuda
+wakka attack m1
+
+# -- Mi'ihen --
+encounter pierce_tutorial
+# Tidus' crits are disabled
+tidus attacknocrit m1
+auron attack m1
+
+encounter chocobo_eater
+wakka attack m1
+yuna attack m1
+
+# -- Moonflow --
+encounter extractor
+wakka attack m1
+
+encounter rikku_tutorial
+
+weapon tidus 1 first_strike
+weapon wakka 2 first_strike break_damage_limit
+armor wakka 1 auto-haste
+
+# -- Macalania Woods --
+encounter spherimorph
+wakka attack m1
+
+# -- Lake Macalania --
+encounter crawler
+wakka attack m1
+
+# -- Macalania Temple --
+encounter seymour
+wakka shining_gem m1
+
+wakka attack m4
+
+wakka attack m1
+
+# -- Crevasse --
+# encounter guado_encounter_1
+# encounter guado_encounter_2
+# encounter guado_encounter_3
+
+encounter wendigo
+wakka attack m2
+wakka attack m1
+wakka attack m3
+
+# -- Bikanel --
+encounter zu
+
+encounter machina_steal_tutorial
+
+encounter sandragora
+wakka attack m1
+
+# -- Home --
+encounter guado_+_3_bomb
+wakka dark_matter monsters
+
+encounter guado_+_2_dual_horn
+wakka attack m1
+wakka attack m2
+wakka attack m3
+
+encounter guado_+_2_chimera
+wakka attack m1
+wakka attack m2
+wakka attack m3
+
+# -- Airship --
+encounter evrae
+wakka attack m1
+
+# -- Bevelle --
+encounter bevelle_guards_1
+wakka attack m1
+wakka attack m2
+wakka attack m3
+
+encounter bevelle_guards_2
+wakka attack m1
+wakka attack m2
+wakka attack m3
+
+encounter bevelle_guards_3
+wakka attack m1
+wakka attack m2
+wakka attack m3
+
+encounter bevelle_guards_4
+wakka attack m1
+wakka attack m2
+wakka attack m3
+
+encounter bevelle_guards_5
+wakka dark_matter monsters
+
+# -- Via Purifico --
+encounter isaaru_grothia
+ixion attack m1
+
+encounter isaaru_pterya
+ixion attack m1
+ixion attack m1
+
+encounter isaaru_spathi
+ixion attack m1
+ixion attack m1
+ixion attack m1
+
+# -- Underwater --
+encounter evrae_altana
+wakka attack m1
+
+# -- Highbridge --
+encounter seymour_natus
+wakka attack m1
+
+# -- Calm Lands --
+encounter defender_x
+wakka attack m1
+wakka attack m1
+
+# -- Gagazet --
+encounter biran_&_yenke
+kimahri dark_matter monsters
+
+encounter seymour_flux
+wakka attack m1
+
+encounter sanctuary_keeper
+wakka attack m1
+
+# -- Zanarkand --
+encounter spectral_keeper
+wakka attack m1
+
+encounter yunalesca
+wakka attack m1
+wakka attack m1
+wakka attack m1
+
+# -- Sin --
+encounter left_fin
+wakka attack m1
+wakka attack m1
+wakka attack m1
+
+encounter right_fin
+wakka attack m1
+wakka attack m1
+wakka attack m1
+
+encounter sin_core
+wakka attack m2
+
+encounter overdrive_sin
+wakka armor_break m1
+wakka attack m1
+
+encounter seymour_omnis
+wakka armor_break m1
+wakka quick_hit_hd m1
+
+# -- Nucleus --
+# encounter
+# encounter
+
+encounter bfa
+wakka quick_hit_hd braskas_final_aeon
+wakka quick_hit_hd braskas_final_aeon
+wakka quick_hit_hd braskas_final_aeon
+
+# Possessed Aeons' Luck is 1
+
+encounter possessed_valefor
+stat valefor luck 1
+# wakka attack valefor_c
+wakka shining_gem valefor_c
+
+encounter possessed_ifrit
+stat ifrit luck 1
+# wakka attack ifrit_c
+wakka shining_gem ifrit_c
+
+encounter possessed_ixion
+stat ixion luck 1
+# wakka attack ixion_c
+wakka shining_gem ixion_c
+
+encounter possessed_shiva
+stat shiva luck 1
+# wakka attack shiva_c
+wakka shining_gem shiva_c
+
+encounter possessed_bahamut
+stat bahamut luck 1
+# wakka attack bahamut_c
+wakka shining_gem bahamut_c

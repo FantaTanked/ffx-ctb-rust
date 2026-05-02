@@ -579,6 +579,27 @@ pub struct SimulationOutput {
     pub unsupported_count: usize,
 }
 
+#[derive(Clone)]
+pub struct SimulationRenderCheckpoint {
+    pub line_index: usize,
+    pub output_index: usize,
+    pub state: SimulationState,
+    pub encounter_counter: usize,
+}
+
+#[derive(Clone)]
+pub struct IncrementalSimulationOutput {
+    pub output_lines: Vec<String>,
+    pub checkpoints: Vec<SimulationRenderCheckpoint>,
+    pub unsupported_count: usize,
+}
+
+impl IncrementalSimulationOutput {
+    pub fn text(&self) -> String {
+        self.output_lines.join("\n")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EncounterCheck {
     encounter: bool,
@@ -720,6 +741,7 @@ pub struct SimulationState {
     magus_motivation: HashMap<Character, i32>,
     current_encounter_name: Option<String>,
     current_encounter_condition: Option<EncounterCondition>,
+    current_formation_monsters: Vec<String>,
     scripted_turn_index: usize,
     respawn_wave_index: usize,
     sahagin_fourth_unlocked: bool,
@@ -766,6 +788,7 @@ impl SimulationState {
             magus_motivation: HashMap::new(),
             current_encounter_name: None,
             current_encounter_condition: None,
+            current_formation_monsters: Vec::new(),
             scripted_turn_index: 0,
             respawn_wave_index: 0,
             sahagin_fourth_unlocked: false,
@@ -783,11 +806,33 @@ impl SimulationState {
     }
 
     pub fn run_lines(&mut self, lines: &[String]) -> SimulationOutput {
+        let output = self.run_lines_with_checkpoints(
+            lines,
+            0,
+            Vec::with_capacity(lines.len()),
+            Vec::new(),
+            0,
+            0,
+        );
+        SimulationOutput {
+            text: output.text(),
+            unsupported_count: output.unsupported_count,
+        }
+    }
+
+    pub fn run_lines_with_checkpoints(
+        &mut self,
+        lines: &[String],
+        start_index: usize,
+        mut rendered: Vec<String>,
+        mut checkpoints: Vec<SimulationRenderCheckpoint>,
+        mut encounter_counter: usize,
+        checkpoint_stride: usize,
+    ) -> IncrementalSimulationOutput {
         let encounter_parties = infer_encounter_parties(lines);
         let encounter_party_swaps = infer_encounter_party_swaps(lines);
-        let mut rendered = Vec::with_capacity(lines.len());
-        let mut multiline_comment = false;
-        for (line_index, line) in lines.iter().enumerate() {
+        let mut multiline_comment = multiline_comment_state(&lines[..start_index.min(lines.len())]);
+        for (line_index, line) in lines.iter().enumerate().skip(start_index) {
             let stripped = line.trim();
             if stripped.starts_with("/*") {
                 multiline_comment = true;
@@ -801,6 +846,18 @@ impl SimulationState {
             }
             if self.should_skip_tanker_placeholder_comment(line) {
                 continue;
+            }
+            if checkpoint_stride > 0
+                && (line_index == 0
+                    || (line.to_ascii_lowercase().starts_with("encounter ")
+                        && encounter_counter % checkpoint_stride == 0))
+            {
+                checkpoints.push(SimulationRenderCheckpoint {
+                    line_index,
+                    output_index: rendered.len(),
+                    state: self.clone(),
+                    encounter_counter,
+                });
             }
             let line_to_execute = self
                 .choose_future_targeted_line(lines, line_index)
@@ -828,9 +885,16 @@ impl SimulationState {
             } else {
                 append_rendered_lines(&mut rendered, &rendered_line);
             }
+            if matches!(
+                parse_raw_action_line(&line_to_execute),
+                ParsedCommand::Encounter { .. }
+            ) {
+                encounter_counter += 1;
+            }
         }
-        SimulationOutput {
-            text: rendered.join("\n"),
+        IncrementalSimulationOutput {
+            output_lines: rendered,
+            checkpoints,
             unsupported_count: self.unsupported_count,
         }
     }
@@ -3303,6 +3367,10 @@ impl SimulationState {
                 .as_ref()
                 .map(|formation| formation.monsters.as_slice()),
         );
+        self.current_formation_monsters = formation
+            .as_ref()
+            .map(|formation| formation.monsters.clone())
+            .unwrap_or_default();
         self.current_encounter_name = Some(encounter_name.clone());
         self.current_encounter_condition = Some(condition);
         self.scripted_turn_index = 0;
@@ -3445,6 +3513,7 @@ impl SimulationState {
         self.retired_temporary_monsters.clear();
         self.current_encounter_name = None;
         self.current_encounter_condition = None;
+        self.current_formation_monsters.clear();
         self.scripted_turn_index = 0;
         self.respawn_wave_index = 0;
         self.sahagin_fourth_unlocked = false;
@@ -3536,8 +3605,24 @@ impl SimulationState {
                 actor.ctb = ctb;
             }
         }
+        self.current_formation_monsters = monster_keys.clone();
         self.monsters = monsters;
         true
+    }
+
+    fn materialize_formation_monster_slot(&mut self, target_name: &str) -> Option<MonsterSlot> {
+        let slot = target_name.parse::<MonsterSlot>().ok()?;
+        if self.actor(ActorId::Monster(slot)).is_some() {
+            return Some(slot);
+        }
+        let monster_key = self
+            .current_formation_monsters
+            .get(slot.0.checked_sub(1)?)
+            .cloned()?;
+        let mut actor = create_monster_actor(&monster_key, slot)?;
+        actor.ctb = i32::MAX / 4;
+        self.monsters.push(actor);
+        Some(slot)
     }
 
     fn apply_scripted_starting_monster_party_shape(&mut self, encounter_name: &str) {
@@ -3789,6 +3874,9 @@ impl SimulationState {
                 "Error: Action {} can't be used in battle",
                 display_action_name(action)
             ));
+        }
+        if let Some(target_name) = args.first() {
+            self.materialize_formation_monster_slot(target_name);
         }
         let prepared_temporary_target = self.prepare_temporary_explicit_target(&action_data, args);
         if let Some(message) = self.required_character_target_error(action, &action_data, args) {
@@ -6989,6 +7077,20 @@ fn append_rendered_lines(rendered: &mut Vec<String>, rendered_line: &str) {
         }
         rendered.push(line.to_string());
     }
+}
+
+fn multiline_comment_state(lines: &[String]) -> bool {
+    let mut state = false;
+    for line in lines {
+        let stripped = line.trim();
+        if stripped.starts_with("/*") {
+            state = true;
+        }
+        if state && stripped.ends_with("*/") {
+            state = false;
+        }
+    }
+    state
 }
 
 fn last_output_block_side(lines: &[String]) -> Option<OutputBlockSide> {
@@ -13408,6 +13510,28 @@ mod tests {
     #[test]
     fn renders_full_default_script_without_parser_gaps() {
         let input = include_str!("../fixtures/ctb_actions_input.txt");
+        assert_actions_notes_render_without_parser_gaps(input);
+    }
+
+    #[test]
+    fn renders_boosters_actions_notes_without_parser_gaps() {
+        let input = include_str!("../data/notes/boosters/actions_notes.txt");
+        assert_actions_notes_render_without_parser_gaps(input);
+    }
+
+    #[test]
+    fn renders_nemesis_actions_notes_without_parser_gaps() {
+        let input = include_str!("../data/notes/nemesis/actions_notes.txt");
+        assert_actions_notes_render_without_parser_gaps(input);
+    }
+
+    #[test]
+    fn renders_no_sphere_grid_actions_notes_without_parser_gaps() {
+        let input = include_str!("../data/notes/no_sphere_grid/actions_notes.txt");
+        assert_actions_notes_render_without_parser_gaps(input);
+    }
+
+    fn assert_actions_notes_render_without_parser_gaps(input: &str) {
         let prepared = crate::script::prepare_action_lines(input);
         let output = simulate(3096296922, &prepared.lines);
         let errors = output

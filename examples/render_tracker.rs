@@ -10,11 +10,10 @@ fn main() {
         .next()
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(3096296922);
-    let input_path = args.next().map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(
-            "../ctb-live-editor-pages/search_outputs/3096296922/seed_3096296922_search_drops.txt",
-        )
-    });
+    let input_path = args
+        .next()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_input_path(&tracker));
     let input = fs::read_to_string(&input_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", input_path.display()));
     let response = ffx_ctb_rust::api::tracker_render_json(&tracker, seed, &input)
@@ -23,5 +22,15 @@ fn main() {
         serde_json::from_str(&response).expect("tracker render response should be valid JSON");
     if let Some(output) = payload.get("output").and_then(Value::as_str) {
         print!("{output}");
+    }
+}
+
+fn default_input_path(tracker: &str) -> PathBuf {
+    match tracker {
+        "actions" | "ctb" => PathBuf::from("fixtures/ctb_actions_input.txt"),
+        "encounters" => PathBuf::from("../ctb-live-editor-pages/ffx_rng_tracker/data/data_files/notes/anypercent/encounters_notes.csv"),
+        _ => PathBuf::from(
+            "../ctb-live-editor-pages/search_outputs/3096296922/seed_3096296922_search_drops.txt",
+        ),
     }
 }

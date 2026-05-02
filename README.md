@@ -100,6 +100,7 @@ Implemented:
 - Drops exposes the first No Encounters search WASM/API hook, including Python-style empty-input and missing-Ghost messages
 - The No Encounters search hook now receives the active seed, runs a first-pass Rust drops route preview, aligns parsed future Encounters output/input to the Drops search section, ignores stale rendered Encounters output after live input edits, reports Python-style cursor/first-Ghost/tested-route, search-mode including first-pass `prefer-guaranteed` when exact output still needs a guaranteed route, and future-section context, constrains current-route preview and bounded synthesis to the first Ghost search window including commented optional Ghost rows, reports first-pass guaranteed-only vs random-row context for exact future rows through first Ghost, reports whether the current Ghost route already yields a No Encounters armor, recognizes commented Ghost rows as optional search rows, ignores indentation-tolerant block-commented repeat directives while preserving one-line block-comment notes, accepts Python-style one-line block comments in exact Encounters input, parses raw CTB-style `Random Encounter:`, `Multizone encounter:`, `Simulated Encounter:`, and `Encounter:` rows from output or pasted fallback input, aligns slash-separated raw multizone labels to the requested Drops section when possible, tries a bounded Ghost-repeat/pre-Ghost-death synthesis pass with candidate counts, applies normalized or synthesized drops input back into the browser, and includes parsed future-encounter row context from the Encounters pane output or by rendering valid Encounters input as a fallback
 - Drops tracker rendering accepts generated optimizer outputs that start with `Drop Search Result`/`Drop Analysis Result` by skipping to the `Resolved drop route` section before parsing route commands
+- `tracker_default_json`/`tracker_render_json` now accept the legacy `actions`/`ctb` tracker surface, backed by the CTB renderer with Python ActionsTracker-style output cleanup
 - Native examples include `render_ctb` and `render_tracker` probes for checking CTB and tracker output against local/generated fixtures without the browser
 - Magus Sister action availability checks raw MP costs like Python before later action-spending discounts apply
 - Core CTB normalization preserves reserve character CTB like Python, leaving Chocobo shadow CTB handling separate
@@ -108,9 +109,9 @@ Implemented:
 
 Not implemented yet:
 
-- Full event parser
-- FFX game-state model
-- Full character/monster action parity beyond the current first-pass simulation
+- Full Python-equivalent event logic for every rare route edge case
+- Complete FFX game-state parity beyond the currently modeled CTB, drops, encounters, inventory, status, equipment, and action surfaces
+- Full character/monster action parity beyond the current upstream-data-driven first-pass simulation
 - Incremental CTB renderer
 - Full Python parity for drops tracker output beyond the currently covered default route and first-pass No Encounters route-search surface
 - Full Python parity for encounters tracker output beyond the currently covered focused tracker tests
@@ -149,6 +150,7 @@ Render a local CTB or tracker fixture from the command line:
 
 ```powershell
 cargo run --example render_ctb -- 3096296922 fixtures\ctb_actions_input.txt
+cargo run --example render_tracker -- actions 3096296922
 cargo run --example render_tracker -- drops 3096296922 ..\ctb-live-editor-pages\search_outputs\3096296922\seed_3096296922_search_drops.txt
 ```
 

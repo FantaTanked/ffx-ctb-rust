@@ -10,6 +10,9 @@ const inputFindNext = document.querySelector("#inputFindNext");
 const outputFind = document.querySelector("#outputFind");
 const outputFindNext = document.querySelector("#outputFindNext");
 const sampleButton = document.querySelector("#sample");
+const noEncountersDialog = document.querySelector("#noEncountersDialog");
+const noEncountersActions = document.querySelector("#noEncountersActions");
+const noEncountersOutput = document.querySelector("#noEncountersOutput");
 const openInputButton = document.querySelector("#openInput");
 const saveInputButton = document.querySelector("#saveInput");
 const saveOutputButton = document.querySelector("#saveOutput");
@@ -265,6 +268,7 @@ async function renderTracker(tracker) {
 async function searchNoEncountersRoutes() {
   const pane = trackerPanes.drops;
   try {
+    showNoEncountersOutput("Searching...", []);
     const module = await loadWasm();
     const seed = Number.parseInt(seedInput.value, 10) >>> 0;
     const startLine = textareaCursorLine(pane.input);
@@ -279,14 +283,45 @@ async function searchNoEncountersRoutes() {
       encountersPane.input.value || null,
       encountersOutput,
     ));
-    if (typeof payload.edited_input === "string" && payload.edited_input !== pane.input.value) {
-      pane.input.value = payload.edited_input;
-      saveWorkspaceCache();
-    }
-    renderOutputText(pane.output, payload.output || "", "drops");
+    showNoEncountersOutput(payload.output || "No result returned.", payload.route_options || []);
   } catch (error) {
     status.textContent = error?.message || String(error);
+    showNoEncountersOutput(error?.message || String(error), []);
   }
+}
+
+function showNoEncountersOutput(text, routeOptions = []) {
+  renderNoEncountersActions(routeOptions);
+  renderOutputText(noEncountersOutput, text, "drops");
+  if (noEncountersDialog && !noEncountersDialog.open) {
+    noEncountersDialog.showModal();
+  }
+}
+
+function renderNoEncountersActions(routeOptions) {
+  noEncountersActions.replaceChildren();
+  if (!Array.isArray(routeOptions) || !routeOptions.length) return;
+  routeOptions.forEach((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `Apply ${option.index}`;
+    button.title = [
+      option.label,
+      option.equipment_text,
+      ...(option.added_lines || []),
+    ].filter(Boolean).join("\n");
+    button.addEventListener("click", () => applyNoEncountersRoute(option));
+    noEncountersActions.append(button);
+  });
+}
+
+function applyNoEncountersRoute(option) {
+  if (typeof option?.edited_input !== "string") return;
+  const pane = trackerPanes.drops;
+  pane.input.value = option.edited_input;
+  saveWorkspaceCache();
+  scheduleTrackerRender("drops");
+  status.textContent = `Applied No Encounters result ${option.index}.`;
 }
 
 function textareaCursorLine(textarea) {
@@ -995,20 +1030,21 @@ function scrollInputLineToTop(lineNumber) {
 }
 
 function scrollOutputToEncounterPosition(encounterPosition) {
-  const lines = (output.textContent || "").split(/\r?\n/);
-  let seen = -1;
-  const outputLineIndex = lines.findIndex((line) => {
-    if (!/^(?:#\s*)?(?:Random Encounter:|Simulated Encounter:|Multizone encounter:|Encounter:)\s*\d+/i.test(line)) {
-      return false;
-    }
-    seen += 1;
-    return seen === encounterPosition;
-  });
-  if (outputLineIndex < 0) return;
-  const style = window.getComputedStyle(output);
-  const fontSize = Number.parseFloat(style.fontSize) || 13;
-  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.4;
-  output.scrollTop = Math.max(0, outputLineIndex * lineHeight - lineHeight - 10);
+  const encounterRows = Array.from(output.querySelectorAll(".output-encounter"));
+  const row = outputEncounterScrollTarget(encounterRows[encounterPosition]);
+  if (!row) return;
+  const outputTop = output.getBoundingClientRect().top;
+  const rowTop = row.getBoundingClientRect().top;
+  output.scrollTop = Math.max(0, output.scrollTop + rowTop - outputTop);
+}
+
+function outputEncounterScrollTarget(encounterSummaryRow) {
+  let row = encounterSummaryRow;
+  while (row) {
+    if (/^encounter\b/i.test(row.textContent.trim())) return row;
+    row = row.previousElementSibling;
+  }
+  return encounterSummaryRow;
 }
 
 function lineStartOffset(text, lineNumber) {

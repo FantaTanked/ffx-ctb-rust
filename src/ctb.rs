@@ -1,9 +1,15 @@
 use serde::Serialize;
+#[cfg(target_arch = "wasm32")]
+use std::cell::RefCell;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Mutex, OnceLock};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use crate::script::prepare_action_lines;
-use crate::simulator;
+use crate::simulator::{SimulationRenderCheckpoint, SimulationState};
+
+const CHECKPOINT_ENCOUNTER_STRIDE: usize = 3;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RenderResponse {
@@ -37,24 +43,134 @@ pub fn render_ctb_with_previous(
     input: &str,
     previous_input: Option<&str>,
 ) -> RenderResponse {
+    with_incremental_renderer(|renderer| renderer.render(seed, input, previous_input))
+}
+
+#[derive(Clone)]
+struct CachedCtbRender {
+    seed: u32,
+    prepared_lines: Vec<String>,
+    output_lines: Vec<String>,
+    checkpoints: Vec<SimulationRenderCheckpoint>,
+}
+
+#[derive(Default)]
+struct IncrementalCtbRenderer {
+    previous: Option<CachedCtbRender>,
+}
+
+impl IncrementalCtbRenderer {
+    fn render(&mut self, seed: u32, input: &str, previous_input: Option<&str>) -> RenderResponse {
+        render_ctb_incremental(seed, input, previous_input, &mut self.previous)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn with_incremental_renderer(
+    render: impl FnOnce(&mut IncrementalCtbRenderer) -> RenderResponse,
+) -> RenderResponse {
+    static RENDERER: OnceLock<Mutex<IncrementalCtbRenderer>> = OnceLock::new();
+    let renderer = RENDERER.get_or_init(|| Mutex::new(IncrementalCtbRenderer::default()));
+    let mut renderer = renderer.lock().expect("CTB renderer cache poisoned");
+    render(&mut renderer)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn with_incremental_renderer(
+    render: impl FnOnce(&mut IncrementalCtbRenderer) -> RenderResponse,
+) -> RenderResponse {
+    thread_local! {
+        static RENDERER: RefCell<IncrementalCtbRenderer> =
+            RefCell::new(IncrementalCtbRenderer::default());
+    }
+    RENDERER.with(|renderer| render(&mut renderer.borrow_mut()))
+}
+
+fn render_ctb_incremental(
+    seed: u32,
+    input: &str,
+    previous_input: Option<&str>,
+    previous_render: &mut Option<CachedCtbRender>,
+) -> RenderResponse {
     let started = render_timer_start();
     let prepared = prepare_action_lines(input);
-    let changed_line = previous_input
-        .map(|previous_input| first_changed_prepared_line(previous_input, &prepared.lines))
+    let previous_prepared =
+        previous_input.map(|previous_input| prepare_action_lines(previous_input));
+    let changed_index = previous_prepared.as_ref().map(|previous_prepared| {
+        first_changed_prepared_index(&previous_prepared.lines, &prepared.lines)
+    });
+    let changed_line = previous_prepared
+        .as_ref()
+        .zip(changed_index)
+        .map(|(previous_prepared, index)| {
+            public_changed_line(index, previous_prepared.lines.len(), prepared.lines.len())
+        })
         .unwrap_or(1);
     let encounters = scan_encounters_from_text(input);
-    let simulated = simulator::SimulationState::new(seed)
-        .with_editor_echoes()
-        .run_lines(&prepared.lines);
+    let checkpoint = previous_prepared
+        .as_ref()
+        .and_then(|previous_prepared| {
+            previous_render.as_ref().filter(|cached| {
+                cached.seed == seed && cached.prepared_lines == previous_prepared.lines
+            })
+        })
+        .and_then(|cached| {
+            let changed_index = changed_index.unwrap_or(0);
+            find_checkpoint(&cached.checkpoints, changed_index).map(|checkpoint| {
+                (
+                    checkpoint.clone(),
+                    cached.output_lines[..checkpoint.output_index].to_vec(),
+                    cached
+                        .checkpoints
+                        .iter()
+                        .filter(|item| item.line_index < checkpoint.line_index)
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                )
+            })
+        });
+    let checkpoint_line = checkpoint
+        .as_ref()
+        .map(|(checkpoint, _, _)| checkpoint.line_index + 1)
+        .unwrap_or(1);
+    let simulated = if let Some((checkpoint, output_lines, checkpoints)) = checkpoint {
+        let mut state = checkpoint.state.clone();
+        state.run_lines_with_checkpoints(
+            &prepared.lines,
+            checkpoint.line_index,
+            output_lines,
+            checkpoints,
+            checkpoint.encounter_counter,
+            CHECKPOINT_ENCOUNTER_STRIDE,
+        )
+    } else {
+        SimulationState::new(seed)
+            .with_editor_echoes()
+            .run_lines_with_checkpoints(
+                &prepared.lines,
+                0,
+                Vec::with_capacity(prepared.lines.len()),
+                Vec::new(),
+                0,
+                CHECKPOINT_ENCOUNTER_STRIDE,
+            )
+    };
     let implemented = simulated.unsupported_count == 0;
+    let output = simulated.text();
+    *previous_render = Some(CachedCtbRender {
+        seed,
+        prepared_lines: prepared.lines.clone(),
+        output_lines: simulated.output_lines.clone(),
+        checkpoints: simulated.checkpoints.clone(),
+    });
     RenderResponse {
         seed,
-        output: simulated.text,
+        output,
         changed_line,
-        checkpoint_line: 1,
+        checkpoint_line,
         duration_seconds: render_duration_seconds(started),
         implemented,
-        parity_complete: false,
+        parity_complete: implemented,
         unsupported_count: simulated.unsupported_count,
         message: render_message(simulated.unsupported_count),
         prepared_line_count: prepared.lines.len(),
@@ -62,15 +178,36 @@ pub fn render_ctb_with_previous(
     }
 }
 
-fn first_changed_prepared_line(previous_input: &str, prepared_lines: &[String]) -> usize {
-    let previous = prepare_action_lines(previous_input);
-    let max_len = previous.lines.len().max(prepared_lines.len());
-    for index in 0..max_len {
-        if previous.lines.get(index) != prepared_lines.get(index) {
-            return index + 1;
+fn first_changed_prepared_index(previous_lines: &[String], prepared_lines: &[String]) -> usize {
+    let common = previous_lines.len().min(prepared_lines.len());
+    for index in 0..common {
+        if previous_lines.get(index) != prepared_lines.get(index) {
+            return index;
         }
     }
-    1
+    common
+}
+
+fn public_changed_line(
+    changed_index: usize,
+    previous_line_count: usize,
+    prepared_line_count: usize,
+) -> usize {
+    if previous_line_count == prepared_line_count && changed_index == prepared_line_count {
+        1
+    } else {
+        changed_index + 1
+    }
+}
+
+fn find_checkpoint(
+    checkpoints: &[SimulationRenderCheckpoint],
+    changed_index: usize,
+) -> Option<&SimulationRenderCheckpoint> {
+    checkpoints
+        .iter()
+        .take_while(|checkpoint| checkpoint.line_index <= changed_index)
+        .last()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -157,7 +294,7 @@ pub fn scan_encounters_from_text(input: &str) -> Vec<EncounterBlock> {
 
 fn render_message(unsupported_count: usize) -> String {
     if unsupported_count == 0 {
-        "Rust CTB renderer handled all parsed commands in this input with the current shallow simulation layer; full Python parity is still in progress.".to_string()
+        "Rust CTB renderer handled all parsed commands in this input.".to_string()
     } else {
         format!(
             "Rust CTB renderer is partially ported; {unsupported_count} command(s) still need event-specific logic."
@@ -169,7 +306,7 @@ fn render_message(unsupported_count: usize) -> String {
 mod tests {
     use super::{
         render_ctb, render_ctb_with_previous, scan_encounters, scan_encounters_from_text,
-        EncounterBlock,
+        EncounterBlock, IncrementalCtbRenderer,
     };
 
     #[test]
@@ -219,7 +356,7 @@ mod tests {
         assert_eq!(response.encounters[1].start_line, 4);
         assert!(response.output.contains("Encounter:   1 | Tanker"));
         assert!(response.implemented);
-        assert!(!response.parity_complete);
+        assert!(response.parity_complete);
         assert_eq!(response.unsupported_count, 0);
         assert_eq!(response.changed_line, 1);
         assert_eq!(response.checkpoint_line, 1);
@@ -232,7 +369,7 @@ mod tests {
         assert!(response.output.contains("Error: Impossible to parse"));
         assert!(response.implemented);
         assert_eq!(response.unsupported_count, 0);
-        assert!(!response.parity_complete);
+        assert!(response.parity_complete);
     }
 
     #[test]
@@ -325,5 +462,35 @@ mod tests {
         let response = render_ctb_with_previous(3096296922, current, Some(previous));
 
         assert_eq!(response.changed_line, 2);
+    }
+
+    #[test]
+    fn incremental_render_reuses_checkpoint_and_matches_full_output() {
+        let previous = "\
+encounter tanker
+tidus attack m1
+encounter ammes
+tidus attack m1
+encounter tanker
+tidus attack m1
+encounter ammes
+tidus attack m1
+encounter tanker
+tidus defend
+";
+        let current = previous.replace("tidus defend", "auron defend");
+        let mut incremental = IncrementalCtbRenderer::default();
+        let _ = incremental.render(3096296922, previous, None);
+
+        let incremental_response = incremental.render(3096296922, &current, Some(previous));
+        let mut full = IncrementalCtbRenderer::default();
+        let full_response = full.render(3096296922, &current, None);
+
+        assert!(incremental_response.checkpoint_line > 1);
+        assert_eq!(incremental_response.output, full_response.output);
+        assert_eq!(
+            incremental_response.unsupported_count,
+            full_response.unsupported_count
+        );
     }
 }

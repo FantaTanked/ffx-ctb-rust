@@ -18,6 +18,20 @@ pub const DEFAULT_SEED: u32 = 3_096_296_922;
 const DEFAULT_INPUT: &str = include_str!("../fixtures/ctb_actions_input.txt");
 const DROPS_NOTES: &str = include_str!("../data/notes/anypercent/drops_notes.txt");
 const ENCOUNTERS_NOTES: &str = include_str!("../data/notes/anypercent/encounters_notes.csv");
+#[cfg(test)]
+const BOOSTERS_DROPS_NOTES: &str = include_str!("../data/notes/boosters/drops_notes.txt");
+#[cfg(test)]
+const BOOSTERS_ENCOUNTERS_NOTES: &str = include_str!("../data/notes/boosters/encounters_notes.csv");
+#[cfg(test)]
+const NEMESIS_DROPS_NOTES: &str = include_str!("../data/notes/nemesis/drops_notes.txt");
+#[cfg(test)]
+const NEMESIS_ENCOUNTERS_NOTES: &str = include_str!("../data/notes/nemesis/encounters_notes.csv");
+#[cfg(test)]
+const NO_SPHERE_GRID_DROPS_NOTES: &str =
+    include_str!("../data/notes/no_sphere_grid/drops_notes.txt");
+#[cfg(test)]
+const NO_SPHERE_GRID_ENCOUNTERS_NOTES: &str =
+    include_str!("../data/notes/no_sphere_grid/encounters_notes.csv");
 const DROPS_USAGE_TEXT: &str = r####"# /*
 # Commands:
 #    "#" is used to ignore a single line
@@ -136,6 +150,16 @@ struct TrackerRenderResponse {
 struct NoEncountersRoutesResponse {
     output: String,
     edited_input: String,
+    route_options: Vec<NoEncountersRouteOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct NoEncountersRouteOption {
+    index: usize,
+    label: String,
+    edited_input: String,
+    equipment_text: String,
+    added_lines: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -889,6 +913,14 @@ fn map_tanker_action_token(token: char) -> &'static str {
 
 pub fn tracker_default_json(tracker: &str, seed: u32) -> Result<String, ApiError> {
     let response = match tracker {
+        "actions" | "ctb" => TrackerDefaultResponse {
+            tracker: tracker.to_string(),
+            seed,
+            input: DEFAULT_INPUT.to_string(),
+            input_filename: "ctb_actions_input.txt",
+            output_filename: "actions_output.txt",
+            sliders: None,
+        },
         "drops" => TrackerDefaultResponse {
             tracker: tracker.to_string(),
             seed,
@@ -917,6 +949,12 @@ pub fn tracker_default_json(tracker: &str, seed: u32) -> Result<String, ApiError
 pub fn tracker_render_json(tracker: &str, seed: u32, input: &str) -> Result<String, ApiError> {
     let started = tracker_timer_start();
     let response = match tracker {
+        "actions" | "ctb" => TrackerRenderResponse {
+            tracker: tracker.to_string(),
+            output: render_actions_tracker(seed, input),
+            duration_seconds: tracker_duration_seconds(started),
+            output_filename: "actions_output.txt",
+        },
         "encounters" => TrackerRenderResponse {
             tracker: tracker.to_string(),
             output: render_encounters_tracker(seed, input),
@@ -938,6 +976,23 @@ pub fn tracker_render_json(tracker: &str, seed: u32, input: &str) -> Result<Stri
     Ok(serde_json::to_string(&response)?)
 }
 
+fn render_actions_tracker(seed: u32, input: &str) -> String {
+    let render_input = protect_tracker_block_comment_repeats(input);
+    let rendered = ctb::render_ctb(seed, &render_input);
+    let output = if tracker_has_active_nopadding(input) {
+        rendered.output
+    } else {
+        pad_basic_tracker_output(
+            &rendered
+                .output
+                .lines()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>(),
+        )
+    };
+    edit_actions_tracker_output(&output)
+}
+
 pub fn no_encounters_routes_json(
     seed: u32,
     input: &str,
@@ -945,7 +1000,7 @@ pub fn no_encounters_routes_json(
     encounters_input: Option<&str>,
     encounters_output: Option<&str>,
 ) -> Result<String, ApiError> {
-    let (output, edited_input) = build_no_encounters_routes_output(
+    let preview = build_no_encounters_routes_output(
         seed,
         input,
         start_line,
@@ -953,12 +1008,15 @@ pub fn no_encounters_routes_json(
         encounters_output,
     );
     Ok(serde_json::to_string(&NoEncountersRoutesResponse {
-        output,
-        edited_input,
+        output: preview.output,
+        edited_input: preview.edited_input.unwrap_or_else(|| input.to_string()),
+        route_options: preview.route_options,
     })?)
 }
 
 fn render_encounters_tracker(seed: u32, input: &str) -> String {
+    let normalized_input = normalize_encounters_tracker_input(input);
+    let input = normalized_input.as_str();
     let render_input = protect_tracker_block_comment_repeats(input);
     let rendered = ctb::render_ctb(seed, &render_input);
     let padding = !tracker_has_active_nopadding(input);
@@ -967,6 +1025,15 @@ fn render_encounters_tracker(seed: u32, input: &str) -> String {
         output
     } else {
         format!("{}\n", output.trim_end())
+    }
+}
+
+fn normalize_encounters_tracker_input(input: &str) -> String {
+    let sliders = parse_encounter_sliders_from(input);
+    if sliders.is_empty() {
+        input.to_string()
+    } else {
+        build_encounters_input_from_sliders(&sliders)
     }
 }
 
@@ -1198,18 +1265,15 @@ fn build_no_encounters_routes_output(
     start_line: usize,
     encounters_input: Option<&str>,
     encounters_output: Option<&str>,
-) -> (String, String) {
+) -> NoEncountersPreview {
     let input_lines = input.lines().collect::<Vec<_>>();
     if input_lines.is_empty() {
-        return (
-            "No Encounters search: input is empty.".to_string(),
-            String::new(),
-        );
+        return NoEncountersPreview::message("No Encounters search: input is empty.".to_string());
     }
     let start_line = start_line.clamp(1, input_lines.len());
     let first_ghost_line = drops_search_first_ghost_line(&input_lines, start_line);
     if first_ghost_line.is_none() {
-        return (
+        return NoEncountersPreview::message_with_input(
             "No Encounters search: no Ghost line was found below the cursor.".to_string(),
             input.to_string(),
         );
@@ -1220,7 +1284,7 @@ fn build_no_encounters_routes_output(
         .and_then(|output| parse_exact_future_encounter_output(output, &start_section_name));
     if encounters_output.is_some_and(|output| !output.trim().is_empty()) {
         if future_from_output.is_none() && encounters_input.is_none() {
-            return (
+            return NoEncountersPreview::message_with_input(
                 "No Encounters search: the Encounters tracker output could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
                 input.to_string(),
             );
@@ -1233,7 +1297,7 @@ fn build_no_encounters_routes_output(
                 parse_exact_future_encounter_output(encounters_input, &start_section_name);
             if future_from_input.is_none() {
                 if !encounters_input_has_exact_future_rows(encounters_input) {
-                    return (
+                    return NoEncountersPreview::message_with_input(
                         "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
                         input.to_string(),
                     );
@@ -1243,7 +1307,7 @@ fn build_no_encounters_routes_output(
                     parse_exact_future_encounter_output(&rendered, &start_section_name);
             }
             if future_from_input.is_none() {
-                return (
+                return NoEncountersPreview::message_with_input(
                     "No Encounters search: the Encounters tracker input could not be parsed. Refresh the Encounters tracker and try again.".to_string(),
                     input.to_string(),
                 );
@@ -1282,16 +1346,32 @@ fn build_no_encounters_routes_output(
         future_rows,
         future,
     );
-    (
-        preview.output,
-        preview.edited_input.unwrap_or_else(|| input.to_string()),
-    )
+    preview
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NoEncountersPreview {
     output: String,
     edited_input: Option<String>,
+    route_options: Vec<NoEncountersRouteOption>,
+}
+
+impl NoEncountersPreview {
+    fn message(output: String) -> Self {
+        Self {
+            output,
+            edited_input: None,
+            route_options: Vec::new(),
+        }
+    }
+
+    fn message_with_input(output: String, edited_input: String) -> Self {
+        Self {
+            output,
+            edited_input: Some(edited_input),
+            route_options: Vec::new(),
+        }
+    }
 }
 
 fn build_no_encounters_preview(
@@ -1449,6 +1529,25 @@ fn build_no_encounters_preview(
             .results
             .first()
             .map(|result| result.route_input.clone()),
+        route_options: search
+            .results
+            .iter()
+            .take(10)
+            .enumerate()
+            .map(|(index, result)| NoEncountersRouteOption {
+                index: index + 1,
+                label: format!(
+                    "{}. add {} action{} | random rows: {}",
+                    index + 1,
+                    result.added_count,
+                    if result.added_count == 1 { "" } else { "s" },
+                    result.random_penalty
+                ),
+                edited_input: result.route_input.clone(),
+                equipment_text: result.equipment_text.clone(),
+                added_lines: result.added_lines.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -1707,7 +1806,8 @@ fn collect_no_encounters_results(
                     .map(|line| format!("line {}: {}", line.source_line, line.raw_line))
                     .chain(ghost_line_change_description(active_ghost_line, ghost_line).into_iter())
                     .collect::<Vec<_>>();
-                let route_input = apply_route_lines_to_original(&lines, &route_lines);
+                let route_input =
+                    apply_route_lines_to_original(&lines, &route_lines, active_ghost_line);
                 results.push(NoEncountersRouteResult {
                     added_count: added_lines.len(),
                     random_penalty: future
@@ -1725,6 +1825,12 @@ fn collect_no_encounters_results(
             }
         }
         if stop {
+            break;
+        }
+        if results
+            .iter()
+            .any(|result| result.random_penalty == 0 && result.added_count == 0)
+        {
             break;
         }
     }
@@ -1791,12 +1897,32 @@ fn ghost_line_change_description(
 fn apply_route_lines_to_original(
     original_lines: &[String],
     route_lines: &[DropsSearchRouteLine],
+    active_ghost_line: Option<&DropsSearchRouteLine>,
 ) -> String {
     let mut output = original_lines.to_vec();
-    for line in route_lines.iter().filter(|line| line.optional) {
+    let selected_ghost_line = route_lines.iter().find(|line| line.is_ghost);
+    for line in route_lines
+        .iter()
+        .filter(|line| line.optional && !line.is_ghost)
+    {
         let index = line.source_line.saturating_sub(1);
         if let Some(slot) = output.get_mut(index) {
             *slot = line.raw_line.clone();
+        }
+    }
+    if let Some(selected_ghost_line) = selected_ghost_line {
+        if let Some(active_ghost_line) = active_ghost_line {
+            if selected_ghost_line.normalized_line != active_ghost_line.normalized_line {
+                let index = active_ghost_line.source_line.saturating_sub(1);
+                if let Some(slot) = output.get_mut(index) {
+                    *slot = selected_ghost_line.raw_line.clone();
+                }
+            }
+        } else if selected_ghost_line.optional {
+            let index = selected_ghost_line.source_line.saturating_sub(1);
+            if let Some(slot) = output.get_mut(index) {
+                *slot = selected_ghost_line.raw_line.clone();
+            }
         }
     }
     output.join("\n")
@@ -1963,7 +2089,7 @@ fn collect_synthetic_no_encounters_results(
                 tested_index: tested_routes,
                 equipment_text: drop,
                 added_lines,
-                route_input: apply_route_lines_to_original(&lines, &route_lines),
+                route_input: apply_route_lines_to_original(&lines, &route_lines, active_ghost_line),
             });
             if results.len() >= 10 {
                 results.sort_by(no_encounters_result_sort_key);
@@ -5427,7 +5553,53 @@ fn hide_tracker_output_before_marker(output: &str) -> String {
         .to_string()
 }
 
+fn edit_actions_tracker_output(output: &str) -> String {
+    hide_tracker_output_before_marker(output)
+        .replace("Boss ", "")
+        .replace("Empty ", "")
+        .replace(" Normal", "")
+        .replace("Random ", "")
+        .replace("Simulated ", "")
+        .replace("__ctb_tracker_block_comment_repeat__", "/repeat")
+}
+
+fn pad_basic_tracker_output(lines: &[String]) -> String {
+    pad_tracker_output_with(lines, |_, _| {})
+}
+
 fn pad_drops_tracker_output(lines: &[String]) -> String {
+    pad_tracker_output_with(lines, |paddings, _| {
+        if paddings.contains_key("Steal") && paddings.contains_key("Drops") {
+            let steal_width = paddings
+                .get("Steal")
+                .and_then(|entry| entry.get(&0))
+                .copied()
+                .unwrap_or_default();
+            let drops_width = paddings
+                .get("Drops")
+                .and_then(|entry| entry.get(&0))
+                .copied()
+                .unwrap_or_default();
+            let width = steal_width.max(drops_width);
+            paddings
+                .entry("Steal".to_string())
+                .or_default()
+                .insert(0, width);
+            paddings
+                .entry("Drops".to_string())
+                .or_default()
+                .insert(0, width + 7);
+        }
+    })
+}
+
+fn pad_tracker_output_with<F>(lines: &[String], adjust_paddings: F) -> String
+where
+    F: FnOnce(
+        &mut std::collections::HashMap<String, std::collections::HashMap<usize, usize>>,
+        &[(String, Vec<String>)],
+    ),
+{
     let mut split_lines = Vec::new();
     for line in lines {
         if let Some((event_name, rest)) = line.split_once(':') {
@@ -5455,27 +5627,7 @@ fn pad_drops_tracker_output(lines: &[String]) -> String {
             *width = (*width).max(part.len());
         }
     }
-    if paddings.contains_key("Steal") && paddings.contains_key("Drops") {
-        let steal_width = paddings
-            .get("Steal")
-            .and_then(|entry| entry.get(&0))
-            .copied()
-            .unwrap_or_default();
-        let drops_width = paddings
-            .get("Drops")
-            .and_then(|entry| entry.get(&0))
-            .copied()
-            .unwrap_or_default();
-        let width = steal_width.max(drops_width);
-        paddings
-            .entry("Steal".to_string())
-            .or_default()
-            .insert(0, width);
-        paddings
-            .entry("Drops".to_string())
-            .or_default()
-            .insert(0, width + 7);
-    }
+    adjust_paddings(&mut paddings, &split_lines);
 
     split_lines
         .into_iter()
@@ -5517,7 +5669,10 @@ fn edit_encounters_tracker_output(output: &str, padding: bool) -> String {
             multiline_comment = true;
         }
         if multiline_comment {
-            if is_commented_encounters_tracker_command_row(raw_line) {
+            if stripped == "*/"
+                || stripped.starts_with("encounter ")
+                || is_commented_encounters_tracker_command_row(raw_line)
+            {
                 if stripped.ends_with("*/") {
                     multiline_comment = false;
                 }
@@ -5568,13 +5723,21 @@ fn edit_encounters_tracker_output(output: &str, padding: bool) -> String {
                 if parts.len() > 4 {
                     parts[0].push(' ');
                 }
-                parts.pop();
+                if parts
+                    .last()
+                    .is_some_and(|part| is_encounters_tracker_turn_order_tail(part))
+                {
+                    parts.pop();
+                }
                 parts.remove(1);
                 line = parts.join("|");
             }
         } else if line.starts_with("Encounter:") || line.starts_with("Multizone encounter:") {
             let mut parts = line.split('|').map(str::to_string).collect::<Vec<_>>();
-            if parts.len() > 2 {
+            if parts
+                .last()
+                .is_some_and(|part| is_encounters_tracker_turn_order_tail(part))
+            {
                 parts.pop();
                 line = parts.join("|");
             }
@@ -5624,6 +5787,11 @@ fn is_encounters_tracker_summary_row(line: &str) -> bool {
         || line.starts_with("Simulated Encounter:")
         || line.starts_with("Encounter:")
         || line.starts_with("Multizone encounter:")
+}
+
+fn is_encounters_tracker_turn_order_tail(part: &str) -> bool {
+    let text = part.trim();
+    text.is_empty() || (text.contains('[') && text.contains(']'))
 }
 
 fn is_commented_encounters_tracker_command_row(line: &str) -> bool {
@@ -6026,7 +6194,11 @@ fn party_to_initials(party: &[Character]) -> String {
 }
 
 fn parse_encounter_sliders() -> Vec<EncounterSliderResponse> {
-    ENCOUNTERS_NOTES
+    parse_encounter_sliders_from(ENCOUNTERS_NOTES)
+}
+
+fn parse_encounter_sliders_from(input: &str) -> Vec<EncounterSliderResponse> {
+    let sliders = input
         .lines()
         .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
         .enumerate()
@@ -6051,13 +6223,22 @@ fn parse_encounter_sliders() -> Vec<EncounterSliderResponse> {
                 initiative,
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if sliders.is_empty() || !looks_like_encounters_csv(input) {
+        Vec::new()
+    } else {
+        sliders
+    }
 }
 
 fn build_encounters_default_input() -> String {
+    build_encounters_input_from_sliders(&parse_encounter_sliders())
+}
+
+fn build_encounters_input_from_sliders(sliders: &[EncounterSliderResponse]) -> String {
     let mut input = String::from("/nopadding\n/usage\n");
     let mut initiative_equipped = false;
-    for slider in parse_encounter_sliders() {
+    for slider in sliders {
         if slider.initiative && !initiative_equipped {
             input.push_str("weapon tidus 1 initiative\n");
             initiative_equipped = true;
@@ -6087,6 +6268,22 @@ fn build_encounters_default_input() -> String {
         }
     }
     input.trim_end_matches('\n').to_string()
+}
+
+fn looks_like_encounters_csv(input: &str) -> bool {
+    input.lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return false;
+        }
+        let fields = trimmed.split(',').map(str::trim).collect::<Vec<_>>();
+        fields.len() >= 6
+            && !fields[0].is_empty()
+            && matches!(fields[1].to_ascii_lowercase().as_str(), "true" | "false")
+            && fields[3].parse::<i32>().is_ok()
+            && fields[4].parse::<i32>().is_ok()
+            && fields[5].parse::<i32>().is_ok()
+    })
 }
 
 fn encounter_input_line(name: &str) -> String {
@@ -6124,17 +6321,20 @@ mod tests {
     use crate::simulator::SimulationState;
 
     use super::{
-        chocobo_action_json, chocobo_swap_json, choose_chocobo_swap_replacement,
-        drops_autoability_values, drops_item_values, drops_search_first_ghost_line,
-        drops_search_window, edit_encounters_tracker_output, find_active_repeat_after_ghost,
+        apply_route_lines_to_original, chocobo_action_json, chocobo_swap_json,
+        choose_chocobo_swap_replacement, drops_autoability_values, drops_item_values,
+        drops_search_first_ghost_line, drops_search_route_line_is_ghost, drops_search_window,
+        edit_encounters_tracker_output, find_active_repeat_after_ghost,
         find_first_ghost_route_line, find_no_encounters_ghost_drop,
         first_ghost_search_window_input, garuda1_attacks_json, garuda2_attack_json,
         lancet_tutorial_timing_json, no_encounters_routes_json, no_encounters_synthesis_families,
         parse_exact_future_encounter_output, party_json, render_ctb_diff_json, render_ctb_json,
         render_drops_tracker, render_steal_line, sample_json, simulate_to_chocobo_cursor_state,
         synthesize_no_encounters_ghost_route, tanker_pattern_json, tracker_default_json,
-        tracker_render_json, tros_attack_json, ChocoboCursorState, DropsInventory, DEFAULT_INPUT,
-        DEFAULT_SEED, DROPS_NOTES,
+        tracker_render_json, tros_attack_json, ChocoboCursorState, DropsInventory,
+        BOOSTERS_DROPS_NOTES, BOOSTERS_ENCOUNTERS_NOTES, DEFAULT_INPUT, DEFAULT_SEED, DROPS_NOTES,
+        ENCOUNTERS_NOTES, NEMESIS_DROPS_NOTES, NEMESIS_ENCOUNTERS_NOTES,
+        NO_SPHERE_GRID_DROPS_NOTES, NO_SPHERE_GRID_ENCOUNTERS_NOTES,
     };
 
     #[test]
@@ -7045,6 +7245,15 @@ mod tests {
 
     #[test]
     fn tracker_default_payloads_match_web_editor_shape() {
+        let actions: Value =
+            serde_json::from_str(&tracker_default_json("actions", DEFAULT_SEED).unwrap()).unwrap();
+        assert_eq!(actions["tracker"], "actions");
+        assert_eq!(actions["input_filename"], "ctb_actions_input.txt");
+        assert_eq!(actions["output_filename"], "actions_output.txt");
+        assert!(actions["input"]
+            .as_str()
+            .is_some_and(|input| input.contains("encounter tanker")));
+
         let drops: Value =
             serde_json::from_str(&tracker_default_json("drops", DEFAULT_SEED).unwrap()).unwrap();
         assert_eq!(drops["tracker"], "drops");
@@ -7070,6 +7279,63 @@ mod tests {
         assert!(encounters["sliders"]
             .as_array()
             .is_some_and(|sliders| !sliders.is_empty()));
+    }
+
+    #[test]
+    fn actions_tracker_render_payload_matches_python_cleanup() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json(
+                "actions",
+                DEFAULT_SEED,
+                "encounter simulated tanker\n///\nencounter tanker\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(payload["tracker"], "actions");
+        assert_eq!(payload["output_filename"], "actions_output.txt");
+        let output = payload["output"].as_str().unwrap();
+        assert!(!output.contains("Command: ///"), "{output}");
+        assert!(!output.contains("Simulated "), "{output}");
+        assert!(output.contains("Encounter:"), "{output}");
+        assert!(output.contains("Tanker"), "{output}");
+    }
+
+    #[test]
+    fn non_default_drops_notes_render_without_parser_errors() {
+        for (route, notes) in [
+            ("boosters", BOOSTERS_DROPS_NOTES),
+            ("nemesis", NEMESIS_DROPS_NOTES),
+            ("no_sphere_grid", NO_SPHERE_GRID_DROPS_NOTES),
+        ] {
+            let payload: Value =
+                serde_json::from_str(&tracker_render_json("drops", DEFAULT_SEED, notes).unwrap())
+                    .unwrap();
+            let output = payload["output"].as_str().unwrap_or_default();
+            assert!(
+                !output.contains("Unsupported drops command"),
+                "{route}: {output}"
+            );
+            assert!(!output.contains("Error:"), "{route}: {output}");
+            assert_eq!(payload["tracker"], "drops");
+        }
+    }
+
+    #[test]
+    fn non_default_encounters_notes_render_without_parser_errors() {
+        for (route, notes) in [
+            ("boosters", BOOSTERS_ENCOUNTERS_NOTES),
+            ("nemesis", NEMESIS_ENCOUNTERS_NOTES),
+            ("no_sphere_grid", NO_SPHERE_GRID_ENCOUNTERS_NOTES),
+        ] {
+            let payload: Value = serde_json::from_str(
+                &tracker_render_json("encounters", DEFAULT_SEED, notes).unwrap(),
+            )
+            .unwrap();
+            let output = payload["output"].as_str().unwrap_or_default();
+            assert!(!output.contains("Error:"), "{route}: {output}");
+            assert_eq!(payload["tracker"], "encounters");
+        }
     }
 
     #[test]
@@ -9377,6 +9643,30 @@ mod tests {
     }
 
     #[test]
+    fn no_encounters_route_option_replaces_active_ghost_without_uncommenting_duplicate() {
+        let lines = vec!["# ghost yuna".to_string(), "ghost ixion".to_string()];
+        let (_, _, ghost_lines) = drops_search_window(&lines, 1);
+        let active_ghost_line = ghost_lines.iter().find(|line| !line.optional);
+        let selected_yuna = ghost_lines
+            .iter()
+            .find(|line| line.optional && line.raw_line == "ghost yuna")
+            .cloned()
+            .unwrap();
+
+        let edited = apply_route_lines_to_original(&lines, &[selected_yuna], active_ghost_line);
+
+        assert_eq!(edited, "# ghost yuna\nghost yuna");
+        assert_eq!(
+            edited
+                .lines()
+                .filter(|line| drops_search_route_line_is_ghost(line)
+                    && !line.trim_start().starts_with('#'))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn no_encounters_synthesis_ignores_repeat_inside_block_comment() {
         let payload: Value = serde_json::from_str(
             &no_encounters_routes_json(1, "ghost ixion\n/*\n/repeat 1\n*/\n", 1, None, None)
@@ -9495,5 +9785,18 @@ mod tests {
         assert!(!output.contains("Impossible to parse"), "{output}");
         assert!(!output.contains("Unknown monster"), "{output}");
         assert!(!output.contains("Equipment pending"), "{output}");
+    }
+
+    #[test]
+    fn encounters_tracker_default_route_has_no_parser_errors() {
+        let payload: Value = serde_json::from_str(
+            &tracker_render_json("encounters", DEFAULT_SEED, ENCOUNTERS_NOTES).unwrap(),
+        )
+        .unwrap();
+        let output = payload["output"].as_str().unwrap();
+        assert!(!output.contains("Error:"), "{output}");
+        assert!(output.contains("Tanker"), "{output}");
+        assert!(output.contains("Ghost"), "{output}");
+        assert!(output.contains("Seymour Omnis"), "{output}");
     }
 }
